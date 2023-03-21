@@ -160,7 +160,12 @@ int main( int argc, char* argv[] )
     // allocate memory for the int buffered data
     double(*cur)[dsize[1]]  = malloc(sizeof(double)*dsize[1]*dsize[0]);
     double(*next)[dsize[1]] = malloc(sizeof(double)*dsize[1]*dsize[0]);
-
+    
+    PDI_multi_expose("init_head",
+                        "pcoord_1d", &pcoord_1d, PDI_OUT,
+                         NULL);
+    MPI_Barrier(main_comm);
+        
     // initialize the data content
     init(cur);
 

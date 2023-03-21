@@ -32,13 +32,14 @@ echo Simulation nodes: ${simarray[@]} "($mpi_per_node MPI tasks on each node)"
 
 head_node=${nodes_array[0]}
 head_node_ip=$(srun -N 1 -n 1 --relative=0 hostname -i &)
-port=6379
+port=6380
+export CLIENT_PORT=20001
 echo -e "Head node: $head_node_ip:$port"
 
 
 # Launching the head node
 srun --nodes=1 --ntasks=1 --relative=0 --cpus-per-task=$cpus_per_worker \
-    ray start --head --node-ip-address="$head_node_ip" --port=$port \
+    ray start --head --node-ip-address="$head_node_ip" --port=$port  --ray-client-server-port=$CLIENT_PORT\
     --num-cpus $cpus_per_worker --block  --resources='{"data": 0}' &
 export RAY_ADDRESS=$head_node_ip:$port
 sleep 15
@@ -67,9 +68,12 @@ fi
 # done
 
 sleep 10
+export HN_ADDRESS=$RAY_ADDRESS
+export MPI_PER_NODE=$mpi_per_node
+unset RAY_ADDRESS
 # Launch the simulation code (python script is here)
 srun --exclusive --oversubscribe -N $num_sim_nodes --ntasks-per-node=$mpi_per_node \
-    -n $mpi_tasks --nodelist=$simunodelist --cpus-per-task=1 \
+    -n $mpi_tasks -c 2 --nodelist=$simunodelist --cpus-per-task=1 \
         pdirun ./simulation &
 sim_pid=$!
 
