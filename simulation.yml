@@ -20,23 +20,42 @@ pdi:
     mpi:
     pycall:
       on_event:
-
         init:
           with: {pcoord_1d: $pcoord_1d, max: $MaxtimeSteps, dsize: $dsize}
           exec: |
+              import os
+              import subprocess
+              import time
+              
+              filename = "outputs/output_"+str(pcoord_1d)+".txt"
+              addr=os.environ.get("RAY_ADDRESS").split(":")[0]
+              # if(pcoord_1d == 0):
+              #     try:
+              #         resultado = subprocess.check_output(
+              #             [
+              #                 "ray",
+              #                 "start",
+              #                 "--address",
+              #                 os.environ.get("RAY_ADDRESS"),
+              #                 "--redis-password",
+              #                 os.environ["redis_password"],
+              #             ]
+              #         )
+              #         # Mostrar el código de salida, la salida estándar y la salida de error del proceso
+              #     except:
+              #         print("Ray start exception")
+        declare:
+          exec: |
             import ray
-            import os
             import time
-            
-            addr=os.environ.get("RAY_ADDRESS").split(":")[0]
-            filename = "outputs/output_"+str(pcoord_1d)+".txt" 
 
-            ray.init("ray://"+addr+":10001") # , _system_config={"infiniband": {"enabled": True}}")
+            ray.init()
 
-            @ray.remote
-            class ProcessActor:
+            @ray.remote (resources={'mpi': 0.001})
+            class ProcessActor: 
                 def __init__(self):
                     self.count = 0
+                    self.tasks = []
 
                 def add(self):
                     self.count += 1
@@ -45,41 +64,46 @@ pdi:
                 def get_count(self):
                     return self.count
 
+                def killself(self):
+                    ray.get(self.tasks)
+                    del tasks
+                    print(Killing)
+                    ray.actor.exit_actor()
+                
+                def add_object(self, iter_id, a):
+                    ob = ray.put(a)
+                    ref = derivee_task.remote(iter_id, self, ob)
+                    self.tasks.append(ref)
+                    del ob
+                    return ref
+
             def Derivee(F, dx):
                 c0 = 2. / 3.
                 dFdx = c0 / dx * (F[3: - 1] - F[1: - 3] - (F[4:] - F[:- 4]) / 8.)
                 return dFdx
             
-            @ray.remote (resources={'data': 0.01})
+            @ray.remote (resources={'data': 0.001})
             def derivee_task(iter, actor: ray.actor.ActorHandle, gt):
                 try:
                   result = Derivee(gt, 1).mean()
-
+                  del gt
                   with open(filename, "a") as f:
-                      f.write("\nii = " + str(iter)+", node = "+str(ray.get_runtime_context().get_node_id())+ ", result = "+str(result)+"\n")
-
+                      f.write("\nii = " + str(iter)+", result = "+str(result)+"\n")
                 except:
                   print("Error occurred")
-
-                actor.add.remote()
-
                 return
             
-            actor = ProcessActor.remote()
+            actor = ProcessActor.options(name="ranktor"+str(pcoord_1d), lifetime="detached").remote()
 
         Available:
-          with: { iter_id: $timestep, source_field: $local_t}
+          with: { i: $timestep, source_field: $local_t}
           exec: |
-            derivee_task.remote(iter_id, actor, ray.put(source_field))
-
+            # subprocess.check_output(["ray", "memory", "--address", os.environ.get("RAY_ADDRESS")])
+            ray.get(actor.add_object.remote(i, source_field))
+            if i==(max-1):
+                actor.killself.remote()
+            
         finish:
           exec: |
-            import ray
-            import time
-            
-            while(ray.get(actor.get_count.remote()) != max):
-                time.sleep(2)
-                continue
             with open(filename, "a") as f:
                 f.write("\n\nFinished.")
-            ray.shutdown()

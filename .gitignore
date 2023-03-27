@@ -11,3 +11,7 @@ message.sh
 derivative.py
 cluster.yaml
 client.py
+address.var
+memory.log
+status.log
+set_cluster.py

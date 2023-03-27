@@ -6,11 +6,11 @@
 PARALLELISM1=4
 PARALLELISM2=4
 MPI_PER_NODE=4
-DATASIZE1=4096
-DATASIZE2=4096
+DATASIZE1=128
+DATASIZE2=128
 GENERATION=10
-NWORKER=4
-CPUS_PER_WORKER=4
+NWORKER=3
+CPUS_PER_WORKER=2
 
 GR='\033[0;32m'
 BL='\033[0;34m'
@@ -51,4 +51,7 @@ mkdir $OUTPUT_DIR_NAME
 CPUS=$(($CPUS_PER_WORKER * ($NWORKER + 1) + ($PARALLELISM1 * $PARALLELISM2) + $SIMUNODES))
 echo Running in $PWD
 `which python` prescript.py $DATASIZE1 $DATASIZE2 $PARALLELISM1 $PARALLELISM2 $GENERATION $NWORKER
-sbatch -N $NNODES --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER
+export JOB_ID=$(sbatch --parsable -N $NNODES --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER)
+
+# /gpfs/users/fernandezx/spack/opt/spack/linux-centos7-cascadelake/gcc-11.2.0/python-3.10.8-gr23wncdlkfsy2ky42hcmljvrpvextag/lib/python3.10/site-packages/(.+?)\|(.+?)\|(.+?)\|
+# ray memory --address $(cat address.var) > memory.log && ray status --address=$(cat address.var) > status.log

@@ -179,6 +179,8 @@ int main( int argc, char* argv[] )
 
     MPI_Barrier(main_comm);
 
+    PDI_event("declare");
+
     // the main loop
     for (; ii<generations; ++ii) {
 
