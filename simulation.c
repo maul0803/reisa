@@ -110,6 +110,23 @@ void exchange(MPI_Comm cart_comm, double cur[dsize[0]][dsize[1]])
                  cart_comm, &status);
 }
 
+
+void print_time (double start, double end, double endA) {
+    
+    double s = (double) (end - start);
+    int h = (int) (s / 3600); 
+    s -= h * 3600; 
+    int m = (int) (s / 60); 
+    s -= m * 60; 
+    printf ("Simulation time: %02d:%02d:%06.3f\n", h, m, s);
+    s = (double) (endA - start);
+    h = (int) (s / 3600); 
+    s -= h * 3600; 
+    m = (int) (s / 60); 
+    s -= m * 60;
+    printf ("Analytics time: %02d:%02d:%06.3f\n", h, m, s);
+}
+
 int main( int argc, char* argv[] )
 {
 
@@ -166,6 +183,8 @@ int main( int argc, char* argv[] )
 
     // our loop counter so as to be able to use it outside the loop
     int ii=0;
+    clock_t start, end, analytics_end;
+
 
     // share useful configuration bits with PDI
     PDI_multi_expose("init",
@@ -178,6 +197,9 @@ int main( int argc, char* argv[] )
                          NULL);
 
     MPI_Barrier(main_comm);
+
+    if(!pcoord_1d)
+        start = MPI_Wtime();
 
     PDI_event("declare");
 
@@ -201,9 +223,20 @@ int main( int argc, char* argv[] )
 
             MPI_Barrier(cart_comm);
         }
+        // if(!pcoord_1d)
+        //     printf("It[%d]\n", ii);
     }
+    if(!pcoord_1d)
+        end = MPI_Wtime();
 
+    PDI_event("analyze");
+    MPI_Barrier(main_comm);
     PDI_event("finish");
+    if(!pcoord_1d)
+        analytics_end = MPI_Wtime();
+
+    if(!pcoord_1d)
+        print_time(start, end, analytics_end);
 
     PDI_finalize();
 
@@ -215,8 +248,9 @@ int main( int argc, char* argv[] )
     free(next);
 
     // finalize MPI
+    if(!pcoord_1d)
+        fprintf(stderr, "[%d] SUCCESS\n", pcoord_1d);
     MPI_Finalize();
 
-    fprintf(stderr, "[%d] SUCCESS\n", pcoord_1d);
     return EXIT_SUCCESS;
 }

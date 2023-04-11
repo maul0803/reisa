@@ -2,15 +2,21 @@
 
 # spack load pdiplugin-pycall@1.6.0 pdiplugin-mpi@1.6.0;
 
-# BASE VALUES
+# MPI VALUES
 PARALLELISM1=4
 PARALLELISM2=4
 MPI_PER_NODE=4
-DATASIZE1=128
-DATASIZE2=128
-GENERATION=10
-NWORKER=3
-CPUS_PER_WORKER=2
+
+# DATASIZE
+DATASIZE1=512
+DATASIZE2=512
+
+# STEPS
+GENERATION=100
+
+# ANALYTICS HARDWARE
+NWORKER=2
+CPUS_PER_WORKER=8
 
 GR='\033[0;32m'
 BL='\033[0;34m'
@@ -51,7 +57,4 @@ mkdir $OUTPUT_DIR_NAME
 CPUS=$(($CPUS_PER_WORKER * ($NWORKER + 1) + ($PARALLELISM1 * $PARALLELISM2) + $SIMUNODES))
 echo Running in $PWD
 `which python` prescript.py $DATASIZE1 $DATASIZE2 $PARALLELISM1 $PARALLELISM2 $GENERATION $NWORKER
-export JOB_ID=$(sbatch --parsable -N $NNODES --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER)
-
-# /gpfs/users/fernandezx/spack/opt/spack/linux-centos7-cascadelake/gcc-11.2.0/python-3.10.8-gr23wncdlkfsy2ky42hcmljvrpvextag/lib/python3.10/site-packages/(.+?)\|(.+?)\|(.+?)\|
-# ray memory --address $(cat address.var) > memory.log && ray status --address=$(cat address.var) > status.log
+export JOB_ID=$(sbatch --parsable -N $NNODES --ntasks=$NPROC -c $CPUS_PER_WORKER Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER)

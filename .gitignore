@@ -15,3 +15,5 @@ address.var
 memory.log
 status.log
 set_cluster.py
+__pycache__/**
+results.log
