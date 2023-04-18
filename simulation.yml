@@ -29,113 +29,110 @@ pdi:
             import ray
             import logging
             import reisa
+            import time
+            import socket
 
             # In this event we init ray, define all the tasks and create the actors
             
             np=int(os.environ.get("mpi_tasks")) # Number of processes
             mpi_per_node=int(os.environ.get("mpi_per_node")) # Number of processes per node
-
-            ray.init(namespace="mpi", logging_level=logging.WARNING)
-
-            @ray.remote (max_task_retries=3, max_restarts=2, resources={'mpi': 1})
-            class ProcessActor: 
-                def __init__(self):
-                    # self.tasks will be a dictionary. Each key will save all the references for one process
-                    self.tasks = {}
-                    # self.count is needed (by the moment) for check that the actor has saved all the references
-                    self.count = 0 
-                    for i in range(mpi_per_node):
-                        self.tasks[i] = [None for _ in range(max)]
-                    return
-                
-                def add_task(self, mpid, dataref, iter):
-                    # Send the task, save the reference and increment the count, note that each reference has an assigned position
-                    self.tasks[mpid%mpi_per_node][iter]=analytics_task.remote(mpid, dataref, iter)
-                    self.count = self.count+1
-                    return
-                
-                def get_count(self):
-                    return self.count
-                
-                def get_tasks(self):
-                    return self.tasks
+            concurrency=1
 
             
-            @ray.remote (resources={'data': 1})
-            def analytics_task(mpid, dataref, iter):
+            ray.init(namespace="mpi", logging_level=logging.ERROR)
+            if rank == 0:
+                nodes = ray.nodes()
+                this_node = socket.gethostname()
+
+                for node in nodes:
+                  if node["NodeManagerHostname"] == this_node:
+                    cpus = int(node["Resources"]["CPU"])
+                    concurrency = cpus-2
+                    break
+                print("Actor concurrency: "+str(concurrency))
+
+
+            
+            @ray.remote (max_task_retries=3, max_restarts=2, resources={"data":0})
+            class FinishingActor:
+                def __init__(self):
+                    self.finished=False
+                    self.count=0
+              
+                def finish(self):
+                    self.finished=True
+                
+                def is_finished(self):
+                    return self.finished
+            
+            @ray.remote (max_task_retries=3, max_restarts=2, resources={"data":0})
+            class ProcessActor: 
+                def __init__(self, f_actor):
+                    self.results = {}
+                    self.count = 0
+                    self.f_actor=f_actor
+                    for i in range(max):
+                        self.results[i] = list()
+                    return
+                
+                def add_result(self, iter, result):
+                    i = int(iter)
+                    self.results[i].append(result)
+                    if len(self.results[i]) == np:
+                        self.count = self.count+1
+                        reisa.manageResults(self.results[i], i)
+                        if(self.count==max):
+                            self.f_actor.finish.remote()
+                    return
+            
+            @ray.remote (max_retries=2, resources={"data":0})
+            def analytics_task(mpid, data, iter, actor):
                 # The task will be defined by the user, it will be executed in the workers, even the simulation is running.
-                return reisa.analytics(mpid, ray.get(dataref[0]), iter)
+                try:
+                    result=reisa.analytics(mpid, data, iter)
+                    result=iter
+                    actor.add_result.remote(iter, result)
+                except:
+                    print("Error during analytics task.")
+                return
 
             actor = None
-            actorname = "ranktor"+str(rank-(rank%mpi_per_node))
-            if rank % mpi_per_node == 0:
-                # One process per node creates the actor
-                actor = ProcessActor.options(max_concurrency=mpi_per_node, name=actorname, lifetime="detached", namespace="mpi").remote()
+            actorname = "ranktor"
+            f_actor = None
+
+            if rank == 0:
+                f_actor = FinishingActor.options(max_concurrency=2, lifetime="detached").remote()
+                actor = ProcessActor.options(max_concurrency=concurrency, name=actorname, namespace="mpi", lifetime="detached").remote(f_actor)
 
         declare:
           exec: |
             # This event is a synchronized point between initialization and iterations in order to get the actor handler
-            if rank % mpi_per_node != 0:
+            if rank != 0:
                 # The processes which have not created the actor look for it
                 actor = ray.get_actor(actorname, namespace="mpi")
+            
         
         Available:
           with: { i: $timestep, data: $local_t}
           exec: |
               # This event manages what is happening for each iteration
-              # Tell the actor to send the task (both actor and task call are asynchronous)
-              actor.add_task.remote(rank, [ray.put(data)], i)
+              analytics_task.remote(rank, ray.put(data), i, actor) # Task launching subtasks¿?
               
         analyze:
           exec: |
             # Outside pycall, the rest of ranks are waiting
             if rank == 0:
-                pending_tasks={}
-
-                # Iterate through all the actors
-                for i in range(0, np, mpi_per_node):
-                    actor = ray.get_actor("ranktor"+str(i), namespace="mpi")
-                    
-                    count=0
-                    # In this loop we ensure that the selected actor has saved all the references so that we can get them
-                    while(count<(max*mpi_per_node)):
-                        # ray.wait better than ray.get: https://docs.ray.io/en/releases-2.0.0/ray-core/actors/task-orders.html#:~:text=For%20tasks%20received%20from%20the%20same%20submitter%2C%20a%20synchronous%2C%20single%2Dthreaded%20actor%20executes%20them%20following%20the%20submission%20order.
-                        ref, _ = ray.wait([actor.get_count.remote()], timeout=2)
-                        if len(ref)>0:
-                            count = ray.get(ref)
-                    
-                    # dict = actor.tasks                    
-                    dict_ref = actor.get_tasks.remote()
-                    dict = ray.get(dict_ref)
-
-                    # We iterate through the dictionary in order to save the references depending on the process
-                    for j in range(mpi_per_node):
-                        # Process i+j
-                        pending_tasks[i+j] = dict[j]
-
-                # Number of ready tasks per process
-                ready_per_process = [0 for _ in range(np)]
-                # Wait for all processes have finished their tasks
-                # While not ready:
-                while sum(ready_per_process)<(np*max):
-                    # for all processes:
-                    for i in range(np): 
-                        # If not ready get the ready tasks and count them:
-                        if ready_per_process[i] < max:
-                            # Using ray.wait() instead of ray.get() to avoid overhead
-                            ready_tasks, _  = ray.wait(pending_tasks[i], timeout=2)
-                            ready_per_process[i] = ready_per_process[i] + len(ready_tasks)
-
-                # Gather all the results from the tasks references
-                results = {}
-                for i in range(np):
-                    results[i] = ray.get(pending_tasks[i])
-                # Manage the results as user prefers
-                reisa.manageResults(results, np, max)
+                i = 0
+                try:
+                    while(not(ray.get(f_actor.is_finished.remote()))):
+                        i = i+1
+                except:
+                    pass
 
         finish:
           exec: |
-            # Just before this event there is a barrier, once the analysis of the results is finished, the actors are destroyed and ray is terminated.
-            if rank % mpi_per_node == 0:
-                ray.kill(actor, no_restart=True)
+            # Just before this event there is a barrier, once the analytics are finished, the actors are destroyed and ray is terminated.
+            if rank==0:
+                ray.kill(f_actor)
+                ray.kill(actor)
             ray.shutdown()

@@ -114,17 +114,9 @@ void exchange(MPI_Comm cart_comm, double cur[dsize[0]][dsize[1]])
 void print_time (double start, double end, double endA) {
     
     double s = (double) (end - start);
-    int h = (int) (s / 3600); 
-    s -= h * 3600; 
-    int m = (int) (s / 60); 
-    s -= m * 60; 
-    printf ("Simulation time: %02d:%02d:%06.3f\n", h, m, s);
+    fprintf(stderr,"Simulation_time: %5.2f\n", s);
     s = (double) (endA - start);
-    h = (int) (s / 3600); 
-    s -= h * 3600; 
-    m = (int) (s / 60); 
-    s -= m * 60;
-    printf ("Analytics time: %02d:%02d:%06.3f\n", h, m, s);
+    fprintf(stderr,"Analytics_time: %5.2f\n", s);
 }
 
 int main( int argc, char* argv[] )
@@ -156,6 +148,15 @@ int main( int argc, char* argv[] )
     // load the generation configuration
     long generations ;
     PC_int(PC_get(conf, ".MaxtimeSteps" ), &generations);
+    
+    long mpi_per_node;
+    PC_int(PC_get(conf, ".mpi_per_node" ), &mpi_per_node);
+
+    long cpus_per_worker;
+    PC_int(PC_get(conf, ".cpus_per_worker" ), &cpus_per_worker);
+
+    long workers;
+    PC_int(PC_get(conf, ".workers" ), &workers);
 
     conf = PC_parse_path("simulation.yml");
     PDI_init(PC_get(conf, ".pdi"));
@@ -183,9 +184,10 @@ int main( int argc, char* argv[] )
 
     // our loop counter so as to be able to use it outside the loop
     int ii=0;
-    clock_t start, end, analytics_end;
+    double start, end, analytics_end;
 
-
+    if(!pcoord_1d)
+        start = MPI_Wtime();
     // share useful configuration bits with PDI
     PDI_multi_expose("init",
                         "pcoord", pcoord, PDI_OUT,
@@ -198,11 +200,11 @@ int main( int argc, char* argv[] )
 
     MPI_Barrier(main_comm);
 
-    if(!pcoord_1d)
-        start = MPI_Wtime();
-
     PDI_event("declare");
 
+    if(!pcoord_1d)
+        fprintf(stderr, "\nRay init time: %2.3f\n", MPI_Wtime() - start);
+        start = MPI_Wtime();
     // the main loop
     for (; ii<generations; ++ii) {
 
@@ -223,20 +225,17 @@ int main( int argc, char* argv[] )
 
             MPI_Barrier(cart_comm);
         }
-        // if(!pcoord_1d)
-        //     printf("It[%d]\n", ii);
     }
     if(!pcoord_1d)
         end = MPI_Wtime();
 
     PDI_event("analyze");
-    MPI_Barrier(main_comm);
-    PDI_event("finish");
     if(!pcoord_1d)
         analytics_end = MPI_Wtime();
+    MPI_Barrier(main_comm);
+    PDI_event("finish");
 
     if(!pcoord_1d)
-        print_time(start, end, analytics_end);
 
     PDI_finalize();
 
@@ -248,8 +247,17 @@ int main( int argc, char* argv[] )
     free(next);
 
     // finalize MPI
-    if(!pcoord_1d)
-        fprintf(stderr, "[%d] SUCCESS\n", pcoord_1d);
+    if(!pcoord_1d){
+        print_time(start, end, analytics_end);
+        fprintf(stderr, "DATA: %d\n", global_size[0]*global_size[1]);
+        fprintf(stderr, "ITERATIONS: %d\n", generations);
+        fprintf(stderr, "MPI: %d\n", psize[0]*psize[1]);
+        fprintf(stderr, "MPI/NODE: %d\n", mpi_per_node);
+        fprintf(stderr, "WORKERS: %d\n", workers);
+        fprintf(stderr, "CPUS/W: %d\n", cpus_per_worker);
+        fprintf(stderr, "JOB: %s\n", argv[1]);
+        fprintf(stderr, "\nSUCCESS\n\n", pcoord_1d);
+    }
     MPI_Finalize();
 
     return EXIT_SUCCESS;
