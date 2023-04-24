@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --time=00:15:00
+#SBATCH --time=01:00:00
 #SBATCH -o reisa.log
 #SBATCH --error reisa.log
 #SBATCH --mem-per-cpu=4GB
 # #SBATCH --wait-all-nodes=1
 #SBATCH --oversubscribe
 #SBATCH --overcommit
-# #SBATCH --exclusive
+#SBATCH --exclusive
 ###################################################################################################
 
 echo -e "Slurm job started at $(date +%d/%m/%Y_%X)\n"
@@ -14,85 +14,92 @@ unset RAY_ADDRESS;
 export RAY_record_ref_creation_sites=1
 export RAY_SCHEDULER_EVENTS=0
 export OMP_NUM_THREADS=1
+export RAY_memory_usage_threshold=0.8
 # export RAY_BACKEND_LOG_LEVEL=warning
-redis_password=$(uuidgen)
-export redis_password
+REDIS_PASSWORD=$(uuidgen)
+export REDIS_PASSWORD
 
 
-export mpi_tasks=$(($SLURM_NTASKS - $SLURM_NNODES - 1))
-export mpi_per_node=$2
-num_sim_nodes=$1
-worker_num=$(($SLURM_JOB_NUM_NODES - 1 - $num_sim_nodes))
-export cpus_per_worker=$3
+export MPI_TASKS=$(($SLURM_NTASKS - $SLURM_NNODES - 1))
+export MPI_PER_NODE=$2
+NUM_SIM_NODES=$1
+WORKER_NUM=$(($SLURM_JOB_NUM_NODES - 1 - $NUM_SIM_NODES))
+export CPUS_PER_WORKER=$3
+CORES_IN_SITU=$4
 
 
 # Setting nodes
-nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
-nodes_array=($nodes)
-simarray=(${nodes_array[@]: -$num_sim_nodes});
+NODES=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
+NODES_ARRAY=($NODES)
+SIMARRAY=(${NODES_ARRAY[@]:$WORKER_NUM+1:$NUM_SIM_NODES});
 
-for nodo in ${simarray[@]}; do
-  simunodelist+="$nodo,"
+for nodo in ${SIMARRAY[@]}; do
+  SIM_NODE_LIST+="$nodo,"
 done
-simunodelist=${simunodelist%,}
+SIM_NODE_LIST=${SIM_NODE_LIST%,}
 
-echo -e "Initing Ray (head node + $worker_num workers + $num_sim_nodes simulation nodes) on nodes: \n\t${nodes_array[@]}"
+echo -e "Initing Ray (1 head node + $WORKER_NUM workers + $NUM_SIM_NODES simulation nodes) on nodes: \n\t${NODES_ARRAY[@]}"
 
-head_node=${nodes_array[0]}
+head_node=${NODES_ARRAY[0]}
 head_node_ip=$(srun -N 1 -n 1 --relative=0 hostname -i &)
 port=6379
 echo -e "Head node: $head_node_ip:$port\n"
 export RAY_ADDRESS=$head_node_ip:$port
 
 # Launching the head node
-srun --nodes=1 --ntasks=1 --relative=0 --cpus-per-task=$cpus_per_worker \
-    ray start --head --node-ip-address="$head_node_ip" --port=$port --redis-password "$redis_password" --include-dashboard True\
-    --num-cpus $cpus_per_worker --block --resources='{"data": 100}'  1>/dev/null 2>&1 &
+srun --nodes=1 --ntasks=1 --relative=0 --cpus-per-task=$CPUS_PER_WORKER \
+    ray start --head --node-ip-address="$head_node_ip" --port=$port --redis-password "$REDIS_PASSWORD" --include-dashboard True\
+    --num-cpus $CPUS_PER_WORKER --block --resources='{"data": 0}'  1>/dev/null 2>&1 &
 echo $RAY_ADDRESS > address.var
 
 cnt=0
-i=0
-max=50
+k=0
+max=10
  # Wait for head node
-while [ $cnt -lt 1 ] && [ $iteraciones -lt $max_iteraciones ]; do
-    sleep 2
+while [ $cnt -lt 1 ] && [ $k -lt $max ]; do
+    sleep 5
     cnt=$(ray status --address=$RAY_ADDRESS 2>/dev/null | grep -c node_)
-    i=$((i+1))
+    k=$((k+1))
 done
 
 # Launch Ray workers
-for ((i = 1; i <= worker_num; i++)); do
-    node_i=${nodes_array[$i]}
-    srun --nodes=1 --ntasks=1 --relative=$i --cpus-per-task=$cpus_per_worker\
-        ray start --address $RAY_ADDRESS --redis-password "$redis_password"\
-        --num-cpus $cpus_per_worker --block --resources='{"data": 100}' 1>/dev/null 2>&1 &
+for ((i = 1; i <= WORKER_NUM; i++)); do
+    node_i=${NODES_ARRAY[$i]}
+    srun --nodes=1 --ntasks=1 --relative=$i --cpus-per-task=$CPUS_PER_WORKER\
+        ray start --address $RAY_ADDRESS --redis-password "$REDIS_PASSWORD"\
+        --num-cpus $CPUS_PER_WORKER --block --resources='{"data": 100}' --object-store-memory $((10*10**9)) 1>/dev/null 2>&1 &
 done
     
 # Launch Ray instance in simulation nodes
 for ((; i < $SLURM_JOB_NUM_NODES; i++)); do
-    node_i=${nodes_array[$i]}
-    srun --nodes=1 --ntasks=1 --relative=$i \
-      ray start --address $RAY_ADDRESS --block --resources='{"data": 0}'  1>/dev/null 2>&1 &
+    node_i=${NODES_ARRAY[$i]}
+    srun  --nodes=1 --ntasks=1 --relative=$i -c $CORES_IN_SITU\
+      ray start --address $RAY_ADDRESS --block --resources='{"actor": 1}' --object-store-memory $((10*10**9)) 1>/dev/null 2>&1 &
 done
 
 cnt=0
-i=0
+k=0
 max=10
  # Wait for all the nodes have join the cluster
-while [ $cnt -lt $SLURM_JOB_NUM_NODES ] && [ $iteraciones -lt $max_iteraciones ]; do
+while [ $cnt -lt $SLURM_JOB_NUM_NODES ] && [ $k -lt $max ]; do
     sleep 5
     cnt=$(ray status --address=$RAY_ADDRESS 2>/dev/null | grep -c node_)
-    i=$((i+1))
+    k=$((k+1))
 done
 
 ray status --address=$RAY_ADDRESS
 
 # Launch the simulation code (python script is here)
-pdirun srun --oversubscribe --overcommit -N $num_sim_nodes --ntasks-per-node=$mpi_per_node \
-    -n $mpi_tasks --nodelist=$simunodelist --cpus-per-task=1\
+# echo -e "Running simulation in: $SIM_NODE_LIST"
+pdirun srun -N $NUM_SIM_NODES --ntasks-per-node=$MPI_PER_NODE\
+    -n $MPI_TASKS --nodelist=$SIM_NODE_LIST --cpus-per-task=1\
         ./simulation $SLURM_JOB_ID &
-sim_pid=$!
+sim=$!
+
+# Running client on head node
+srun --nodes=1 --ntasks=1 --relative=0 -c 1\
+    `which python` client.py &
 
 # Wait for results
-wait $sim_pid
+wait $sim
 echo -e "\nSlurm job finished at $(date +%d/%m/%Y_%X)"

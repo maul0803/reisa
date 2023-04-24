@@ -33,8 +33,12 @@ int pcoord[2];
  */
 void init(double dat[dsize[0]][dsize[1]])
 {
-    for (int yy=0; yy<dsize[0]; ++yy)  for (int xx=0; xx<dsize[1]; ++xx)  dat[yy][xx] = 0;
-    if ( pcoord[1] == 0 ) for (int yy=0; yy<dsize[0]; ++yy)  dat[yy][0] = 1000000;
+    for (int yy=0; yy<dsize[0]; ++yy) 
+        for (int xx=0; xx<dsize[1]; ++xx)
+            dat[yy][xx] = .0;
+    if ( pcoord[1] == 0 )
+        for (int yy=0; yy<dsize[0]; ++yy) 
+            dat[yy][0] = 1000000;
 }
 
 /** Compute the values at the next time-step based on the values at the current time-step
@@ -114,9 +118,9 @@ void exchange(MPI_Comm cart_comm, double cur[dsize[0]][dsize[1]])
 void print_time (double start, double end, double endA) {
     
     double s = (double) (end - start);
-    fprintf(stderr,"Simulation_time: %5.2f\n", s);
+    fprintf(stderr,"SIMULATION_TIME: %5.4f\n", s);
     s = (double) (endA - start);
-    fprintf(stderr,"Analytics_time: %5.2f\n", s);
+    // fprintf(stderr,"ANALYTICS_TIME: %5.4f\n", s);
 }
 
 int main( int argc, char* argv[] )
@@ -152,6 +156,9 @@ int main( int argc, char* argv[] )
     long mpi_per_node;
     PC_int(PC_get(conf, ".mpi_per_node" ), &mpi_per_node);
 
+    long cores_in_situ;
+    PC_int(PC_get(conf, ".cores_in_situ" ), &cores_in_situ);
+
     long cpus_per_worker;
     PC_int(PC_get(conf, ".cpus_per_worker" ), &cpus_per_worker);
 
@@ -186,9 +193,11 @@ int main( int argc, char* argv[] )
     int ii=0;
     double start, end, analytics_end;
 
-    if(!pcoord_1d)
+    if(!pcoord_1d){
         start = MPI_Wtime();
+    }
     // share useful configuration bits with PDI
+    
     PDI_multi_expose("init",
                         "pcoord", pcoord, PDI_OUT,
                         "pcoord_1d", &pcoord_1d, PDI_OUT,
@@ -196,18 +205,22 @@ int main( int argc, char* argv[] )
                         "psize", psize, PDI_OUT,
                         "timestep", &ii, PDI_OUT,
                         "MaxtimeSteps", &generations, PDI_OUT,
+                        "mpi_per_node", &mpi_per_node, PDI_OUT,
                          NULL);
 
     MPI_Barrier(main_comm);
 
     PDI_event("declare");
 
-    if(!pcoord_1d)
-        fprintf(stderr, "\nRay init time: %2.3f\n", MPI_Wtime() - start);
+    if(!pcoord_1d){
+        fprintf(stderr, "\nRAY_INIT_TIME: %2.3f\n", MPI_Wtime() - start);
         start = MPI_Wtime();
+    }
     // the main loop
     for (; ii<generations; ++ii) {
 
+        if(!pcoord_1d)
+            fprintf(stderr, "Iter [%d]\n", ii);
         PDI_multi_expose("Available",
                  "timestep",         &ii, PDI_OUT,
                  "local_t", cur, PDI_OUT,
@@ -235,8 +248,6 @@ int main( int argc, char* argv[] )
     MPI_Barrier(main_comm);
     PDI_event("finish");
 
-    if(!pcoord_1d)
-
     PDI_finalize();
 
     // destroy the paraconf configuration tree
@@ -249,14 +260,16 @@ int main( int argc, char* argv[] )
     // finalize MPI
     if(!pcoord_1d){
         print_time(start, end, analytics_end);
-        fprintf(stderr, "DATA: %d\n", global_size[0]*global_size[1]);
+        fprintf(stderr, "PROBLEM_SIZE: %.0f\n", (float) (global_size[0]*global_size[1]));
+        fprintf(stderr, "BYTES_PER_PROCESS: %.0f\n", (float) (global_size[0]*global_size[1])*sizeof(double)/(psize[0]*psize[1]));
         fprintf(stderr, "ITERATIONS: %d\n", generations);
         fprintf(stderr, "MPI: %d\n", psize[0]*psize[1]);
-        fprintf(stderr, "MPI/NODE: %d\n", mpi_per_node);
+        fprintf(stderr, "MPI_PER_NODE: %d\n", mpi_per_node);
+        fprintf(stderr, "CORES_IN_SITU: %d\n", cores_in_situ);
         fprintf(stderr, "WORKERS: %d\n", workers);
-        fprintf(stderr, "CPUS/W: %d\n", cpus_per_worker);
-        fprintf(stderr, "JOB: %s\n", argv[1]);
-        fprintf(stderr, "\nSUCCESS\n\n", pcoord_1d);
+        fprintf(stderr, "CPUS_PER_WORKER: %d\n", cpus_per_worker);
+        fprintf(stderr, "SLURM_JOB_ID: %s\n", argv[1]);
+        fprintf(stderr, "\nMPI FINISHED\n\n", pcoord_1d);
     }
     MPI_Finalize();
 
