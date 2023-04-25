@@ -27,6 +27,7 @@ ray.init("ray://localhost:10001")
 def func(data):
     return np.sum(data)
 
+in_situ = False
 @ray.remote (max_retries=2, resources={"data":1})
 def remote_sum(data):
     # print(data)
@@ -59,8 +60,9 @@ for i in range(iterations):
     gc.collect()
 
 end = time.time()
-print("ANALYTICS_TIME: "+ str(end-start))
-print("ANALYTICS_ITERATIONS: "+ str(iter_times))
+print("{:<21}".format("ANALYTICS_TIME:") + str(end-start))
+print("{:<21}".format("ANL_ITER_TIME:") + str(iter_times))
+print("{:<21}".format("IN_SITU_PROCESSING:") + str(in_situ))
 
 for actor in actors:
     actor.finish.remote()

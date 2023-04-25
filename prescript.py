@@ -29,7 +29,8 @@ with open('config.yml', 'w') as file:
             "workers":   int(sys.argv[6]),
             "mpi_per_node":   int(sys.argv[7]),
             "cpus_per_worker":   int(sys.argv[8]),
-            "cores_in_situ":   int(sys.argv[9])}
+            "cores_in_situ":   int(sys.argv[9]),
+            "worker_threading":   int(sys.argv[10])}
 if data:
     with open('config.yml', 'w') as file:
         yaml.safe_dump(data, file)

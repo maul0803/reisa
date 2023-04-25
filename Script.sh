@@ -26,6 +26,7 @@ NUM_SIM_NODES=$1
 WORKER_NUM=$(($SLURM_JOB_NUM_NODES - 1 - $NUM_SIM_NODES))
 export CPUS_PER_WORKER=$3
 CORES_IN_SITU=$4
+REISA_THREADING=$5
 
 
 # Setting nodes
@@ -65,9 +66,9 @@ done
 # Launch Ray workers
 for ((i = 1; i <= WORKER_NUM; i++)); do
     node_i=${NODES_ARRAY[$i]}
-    srun --nodes=1 --ntasks=1 --relative=$i --cpus-per-task=$CPUS_PER_WORKER\
+    srun --nodes=1 --ntasks=1 --relative=$i --cpus-per-task=$CPUS_PER_WORKER --threads-per-core=$REISA_THREADING\
         ray start --address $RAY_ADDRESS --redis-password "$REDIS_PASSWORD"\
-        --num-cpus $CPUS_PER_WORKER --block --resources='{"data": 100}' --object-store-memory $((10*10**9)) 1>/dev/null 2>&1 &
+        --num-cpus $(($CPUS_PER_WORKER*$REISA_THREADING)) --block --resources='{"data": 100}' --object-store-memory $((10*10**9)) 1>/dev/null 2>&1 &
 done
     
 # Launch Ray instance in simulation nodes

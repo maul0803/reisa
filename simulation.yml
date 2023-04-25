@@ -118,8 +118,9 @@ pdi:
         analyze:
           exec: |
             if rank == 0:
-                print("PUT_TIME: " + str(put_time))
-                print("ACTOR_BLOCK_TIME: " + str(actor_time))
+                print("{:<21}".format("PUT_TIME:") + str(put_time))
+                print("{:<21}".format("SIM_BLOCK_TIME:") + str(actor_time))
+                print("{:<21}".format("ACTOR_CONCURRENCY:") + str(concurrency))
 
             if rank%mpi_per_node == 0:
               ref = [actor.is_finished.remote()]

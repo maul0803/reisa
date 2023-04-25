@@ -27,20 +27,21 @@ echo -e "Running in $MAIN_DIR\n"
 pdirun make -B simulation
 
 # MPI VALUES
-PARALLELISM1=8
-PARALLELISM2=8
-MPI_PER_NODE=4
+PARALLELISM1=4
+PARALLELISM2=4
+MPI_PER_NODE=2
 
 # DATASIZE
 DATASIZE1=$((4000*$PARALLELISM1))
 DATASIZE2=$((4000*$PARALLELISM2))
 
 # STEPS
-GENERATION=6
+GENERATION=10
 
 # ANALYTICS HARDWARE
-NWORKER=4
-CPUS_PER_WORKER=40
+WORKER_NODES=$(($PARALLELISM1*$PARALLELISM2/4))
+CPUS_PER_WORKER=24
+WORKER_THREADING=2 # DEISA uses 24 Threads/worker, 2 workers/node -> 48 threads per node -> 12 Threads per MPI/process
 
 #WORKER CORES IN SIMULATION NODES
 CORES_IN_SITU=8
@@ -90,40 +91,40 @@ CORES_IN_SITU=8
 #                 case $WCPU in 
                 
 #                     64) 
-#                         NWORKER=8
+#                         WORKER_NODES=8
 #                         CPUS_PER_WORKER=8
 #                         ;;
 #                     32)
-#                         NWORKER=8
+#                         WORKER_NODES=8
 #                         CPUS_PER_WORKER=4
 #                         ;;
 #                     16)
-#                         NWORKER=2
+#                         WORKER_NODES=2
 #                         CPUS_PER_WORKER=8
 #                         ;;
 #                     8)
-#                         NWORKER=2
+#                         WORKER_NODES=2
 #                         CPUS_PER_WORKER=4
 #                         ;;
 #                     4)
-#                         NWORKER=2
+#                         WORKER_NODES=2
 #                         CPUS_PER_WORKER=2
 #                         ;;
 #                     *)
-#                         NWORKER=1
+#                         WORKER_NODES=1
 #                         CPUS_PER_WORKER=2
 #                         ;;
 #                 esac
 
                 # AUXILIAR VALUES
                 SIMUNODES=$(($PARALLELISM2 * $PARALLELISM1 / $MPI_PER_NODE)) # / MPI tasks per node
-                NNODES=$(($NWORKER + $SIMUNODES + 1)) # WORKERS + HEAD + SIMULATION
+                NNODES=$(($WORKER_NODES + $SIMUNODES + 1)) # WORKERS + HEAD + SIMULATION
                 NPROC=$(($PARALLELISM2 * $PARALLELISM1 + $NNODES + 1))
 
                 # MANAGING FILES
                 date=$(date +%Y-%m-%d_%X)
                 OUTPUT=outputs/$date
-                `which python` prescript.py $DATASIZE1 $DATASIZE2 $PARALLELISM1 $PARALLELISM2 $GENERATION $NWORKER $MPI_PER_NODE $CPUS_PER_WORKER $CORES_IN_SITU
+                `which python` prescript.py $DATASIZE1 $DATASIZE2 $PARALLELISM1 $PARALLELISM2 $GENERATION $WORKER_NODES $MPI_PER_NODE $CPUS_PER_WORKER $CORES_IN_SITU $WORKER_THREADING
                 mkdir -p $OUTPUT
                 mkdir logs 2>/dev/null
                 touch logs/jobs.log
@@ -132,7 +133,7 @@ CORES_IN_SITU=8
                 # RUNNING
                 cd $OUTPUT
                 echo $1 > comment.txt
-                echo -e "Executing $(sbatch --parsable --qos=normal -N $NNODES --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER $CORES_IN_SITU) in $OUTPUT" >> $MAIN_DIR/logs/jobs.log
+                echo -e "Executing $(sbatch --parsable --qos=normal -N $NNODES --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER $CORES_IN_SITU $WORKER_THREADING) in $OUTPUT" >> $MAIN_DIR/logs/jobs.log
                 cd $MAIN_DIR
                 sleep 1
 #             done
