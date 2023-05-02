@@ -30,10 +30,20 @@ pdi:
             import logging
             import time
 
-            concurrency=20
+            concurrency=8
 
+            class RayList(list):
+                def __getitem__(self, index):
+                    item = super().__getitem__(index)
+                    value = ray.get(item)
+                    return value
+            
             # In this event we init ray, define all the tasks and create the actors
             ray.init(namespace="mpi", logging_level=logging.ERROR)
+            
+            @ray.remote (max_retries=2, resources={"data":1}, scheduling_strategy="SPREAD")
+            def queue_task(func, queue):
+                return func(RayList(queue))
             
             @ray.remote (resources={"actor":1})
             class ProcessActor: 
@@ -41,8 +51,8 @@ pdi:
                     self.finished = False
                     self.queues = []
                     self.control = [0 for _ in range(max)]
-                    for i in range(max):
-                        self.queues.append([None for _ in range(mpi_per_node)]) # Levar conta das posicións usadas
+                    for i in range(mpi_per_node):
+                        self.queues.append([None for _ in range(max)])
                     return
                 
                 def is_finished(self):
@@ -57,17 +67,22 @@ pdi:
                 def add_value(self, mpid, result, iter):
                     iter=int(iter)
                     mpid=int(mpid)
-                    self.queues[iter][mpid%mpi_per_node]=result[0]
+                    self.queues[mpid%mpi_per_node][iter]=result[0]
                     self.control[iter] = self.control[iter]+1
                     return
 
-                def get_iter(self, iter):
-                    iter = int(iter)
-                    while self.control[iter] < mpi_per_node:
-                        pass    
-                    result = self.queues[iter]
-                    self.queues[iter] = None
-                    return result
+                def trigger(self, remote_task, func, timesteps):
+
+                    for iter in timesteps:
+                        while self.control[iter]<mpi_per_node:
+                            pass
+                    
+                    tasks = []
+                    for queue in self.queues:
+                        tasks.append(queue_task.remote(func, queue))
+                    
+                    return remote_task.remote(tasks)
+
 
             actor = None
             actorname = "ranktor"+str(rank - (rank%mpi_per_node))
@@ -122,7 +137,7 @@ pdi:
                 print("{:<21}".format("SIM_BLOCK_TIME:") + str(actor_time))
                 print("{:<21}".format("ACTOR_CONCURRENCY:") + str(concurrency))
 
-            if rank%mpi_per_node == 0:
+            if rank == 0:
               ref = [actor.is_finished.remote()]
               while(True):
                   f, _ = ray.wait(ref, timeout=1)

@@ -3,11 +3,12 @@
 #SBATCH -o reisa.log
 #SBATCH --error reisa.log
 #SBATCH --mem-per-cpu=4GB
-# #SBATCH --wait-all-nodes=1
-#SBATCH --oversubscribe
-#SBATCH --overcommit
+#SBATCH --wait-all-nodes=1
+# #SBATCH --oversubscribe
+# #SBATCH --overcommit
 #SBATCH --exclusive
 ###################################################################################################
+inicio=$(date +%s%N)
 
 echo -e "Slurm job started at $(date +%d/%m/%Y_%X)\n"
 unset RAY_ADDRESS;
@@ -39,7 +40,7 @@ for nodo in ${SIMARRAY[@]}; do
 done
 SIM_NODE_LIST=${SIM_NODE_LIST%,}
 
-echo -e "Initing Ray (1 head node + $WORKER_NUM workers + $NUM_SIM_NODES simulation nodes) on nodes: \n\t${NODES_ARRAY[@]}"
+echo -e "Initing Ray (1 head node + $WORKER_NUM worker nodes + $NUM_SIM_NODES simulation nodes) on nodes: \n\t${NODES_ARRAY[@]}"
 
 head_node=${NODES_ARRAY[0]}
 head_node_ip=$(srun -N 1 -n 1 --relative=0 hostname -i &)
@@ -87,19 +88,25 @@ while [ $cnt -lt $SLURM_JOB_NUM_NODES ] && [ $k -lt $max ]; do
     cnt=$(ray status --address=$RAY_ADDRESS 2>/dev/null | grep -c node_)
     k=$((k+1))
 done
+fin=$(date +%s%N)
 
 ray status --address=$RAY_ADDRESS
 
 # Launch the simulation code (python script is here)
 # echo -e "Running simulation in: $SIM_NODE_LIST"
-pdirun srun -N $NUM_SIM_NODES --ntasks-per-node=$MPI_PER_NODE\
+pdirun srun --oversubscribe --overcommit -N $NUM_SIM_NODES --ntasks-per-node=$MPI_PER_NODE\
     -n $MPI_TASKS --nodelist=$SIM_NODE_LIST --cpus-per-task=1\
         ./simulation $SLURM_JOB_ID &
 sim=$!
 
 # Running client on head node
-srun --nodes=1 --ntasks=1 --relative=0 -c 1\
+srun --oversubscribe --overcommit --nodes=1 --ntasks=1 --relative=0 -c 1\
     `which python` client.py &
+
+duracion=$((fin-inicio))
+duracion=$(bc <<< "scale=5; $duracion/1000000000")
+sleep 1
+printf "\n%-21s%s\n" "RAY_DEPLOY_TIME:" "$duracion"
 
 # Wait for results
 wait $sim
