@@ -118,11 +118,11 @@ void exchange(MPI_Comm cart_comm, double cur[dsize[0]][dsize[1]])
 void print_time (double start, double end, double *time_per_iter, int generations) {
     
     double s = (double) (end - start);
-    fprintf(stderr,"%-21s%.15f\n", "SIMULATION_TIME:", s);
+    fprintf(stderr,"%-21s%.15f (avg: %.15f)\n", "SIMULATION_TIME:", s, s/generations);
 
     printf("%-21s[", "SIM_ITER_TIMES:");
     for (int i = 0; i < generations; i++) {
-        printf("%.15f", time_per_iter[i]);
+        printf("%.5f", time_per_iter[i]);
         if (i < generations-1)
             printf(", ");
     }
@@ -202,7 +202,7 @@ int main( int argc, char* argv[] )
 
     // our loop counter so as to be able to use it outside the loop
     int ii=0;
-    double start, end, analytics_end, time_per_iter[generations], start_iter;
+    double start, end, analytics_end, time_per_iter[generations], start_iter, no_pdi, no_pdi_step;
 
     if(!pcoord_1d){
         start = MPI_Wtime();
@@ -220,18 +220,18 @@ int main( int argc, char* argv[] )
                          NULL);
 
     MPI_Barrier(main_comm);
-
     PDI_event("declare");
+    MPI_Barrier(main_comm);
 
     if(!pcoord_1d){
-        fprintf(stderr, "\n%-21s%2.3f\n", "RAY_INIT_TIME:", MPI_Wtime() - start);
+        fprintf(stderr, "%-21s%2.5f\n", "RAY_INIT_TIME:", MPI_Wtime() - start);
         start = MPI_Wtime();
     }
     // the main loop
     for (; ii<generations; ++ii) {
 
+        start_iter = MPI_Wtime();
         if(!pcoord_1d){
-            start_iter = MPI_Wtime();
             fprintf(stderr, "Iter [%d]\n", ii);
         }
         PDI_multi_expose("Available",
@@ -239,6 +239,7 @@ int main( int argc, char* argv[] )
                  "local_t", cur, PDI_OUT,
                   NULL);
 
+        no_pdi_step = MPI_Wtime();
         for (int jj=0; jj<10; ++jj){
             // compute the values for the next iteration
             iter(dsize, cur, next);
@@ -252,8 +253,8 @@ int main( int argc, char* argv[] )
             MPI_Barrier(cart_comm);
         }
 
-        if(!pcoord_1d)
-            time_per_iter[ii]= MPI_Wtime()-start_iter;
+        no_pdi += MPI_Wtime() - no_pdi_step;
+        time_per_iter[ii]= MPI_Wtime()-start_iter;
     }
     if(!pcoord_1d)
         end = MPI_Wtime();
@@ -276,6 +277,8 @@ int main( int argc, char* argv[] )
     // finalize MPI
     if(!pcoord_1d){
         print_time(start, end, time_per_iter, generations);
+        fprintf(stderr, "%-21s%.15f (avg: %.15f)\n", "SIM_WTHOUT_PDI:", no_pdi, no_pdi/generations);
+        fprintf(stderr, "%-21s%.15f (avg: %.15f)\n", "PDI_DELAY:", end-start-no_pdi, (end-start-no_pdi)/generations);
         fprintf(stderr, "%-21s%.0f\n", "PROBLEM_SIZE:", (float) (global_size[0]*global_size[1]));
         fprintf(stderr, "%-21s%.0f\n", "MB_PER_PROCESS:", (float) (global_size[0]*global_size[1])*sizeof(double)/(psize[0]*psize[1])/1000000);
         fprintf(stderr, "%-21s%d\n", "ITERATIONS:", generations);
@@ -285,7 +288,7 @@ int main( int argc, char* argv[] )
         fprintf(stderr, "%-21s%d\n", "WORKER_NODES:", workers);
         fprintf(stderr, "%-21s%d\n", "CPUS_PER_WORKER:", cpus_per_worker);
         fprintf(stderr, "%-21s%d\n", "WORKER_THREADING:", worker_threading);
-        fprintf(stderr, "%-21s%s\n", "SLURM_JOB_ID:", argv[1]);
+        fprintf(stderr, "\n%-21s%s\n", "SLURM_JOB_ID:", argv[1]);
         // fprintf(stderr, "\nMPI FINISHED\n\n", pcoord_1d);
     }
 

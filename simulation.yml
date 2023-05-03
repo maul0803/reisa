@@ -29,11 +29,16 @@ pdi:
             import ray
             import logging
             import time
-
-            concurrency=20
+            import os
+            import netifaces
 
             # In this event we init ray, define all the tasks and create the actors
-            ray.init(namespace="mpi", logging_level=logging.ERROR)
+            ib = netifaces.ifaddresses('ib0')[netifaces.AF_INET][0]['addr']
+            concurrency=int(mpi_per_node)+2
+
+            ray.init(address="auto", namespace="mpi", logging_level=logging.ERROR, _node_ip_address=ib)
+            # ray.timeline(filename="timeline-rank"+str(rank)+".json")
+
             
             @ray.remote (resources={"actor":1})
             class ProcessActor: 
@@ -41,8 +46,8 @@ pdi:
                     self.finished = False
                     self.queues = []
                     self.control = [0 for _ in range(max)]
-                    for i in range(max):
-                        self.queues.append([None for _ in range(mpi_per_node)]) # Levar conta das posicións usadas
+                    for i in range(mpi_per_node):
+                        self.queues.append([None for _ in range(max)]) # Levar conta das posicións usadas
                     return
                 
                 def is_finished(self):
@@ -57,17 +62,19 @@ pdi:
                 def add_value(self, mpid, result, iter):
                     iter=int(iter)
                     mpid=int(mpid)
-                    self.queues[iter][mpid%mpi_per_node]=result[0]
+                    self.queues[mpid%mpi_per_node][iter]=result[0]
                     self.control[iter] = self.control[iter]+1
                     return
 
-                def get_iter(self, iter):
+                def trigger(self, remote_task, iter):
                     iter = int(iter)
                     while self.control[iter] < mpi_per_node:
                         pass    
-                    result = self.queues[iter]
-                    self.queues[iter] = None
-                    return result
+
+                    tasks = []
+                    for mpid in range(mpi_per_node):
+                        tasks.append(remote_task.remote([self.queues[mpid][iter]], 0, iter))
+                    return remote_task.remote(tasks, 1, iter)
 
             actor = None
             actorname = "ranktor"+str(rank - (rank%mpi_per_node))

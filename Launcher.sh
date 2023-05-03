@@ -44,7 +44,7 @@ CPUS_PER_WORKER=24
 WORKER_THREADING=2 # DEISA uses 24 Threads/worker, 2 workers/node -> 48 threads per node -> 12 Threads per MPI/process
 
 #WORKER CORES IN SIMULATION NODES
-CORES_IN_SITU=8
+CORES_IN_SITU=4
 
 # for SIZE in 6 8 10 12 14
 # do
@@ -128,7 +128,7 @@ CORES_IN_SITU=8
                 mkdir -p $OUTPUT
                 mkdir logs 2>/dev/null
                 touch logs/jobs.log
-                cp *.yml client.py simulation Script.sh $OUTPUT
+                cp *.yml client.py reisa.py simulation Script.sh $OUTPUT
 
                 # RUNNING
                 cd $OUTPUT
