@@ -164,9 +164,6 @@ int main( int argc, char* argv[] )
     long mpi_per_node;
     PC_int(PC_get(conf, ".mpi_per_node" ), &mpi_per_node);
 
-    long cores_in_situ;
-    PC_int(PC_get(conf, ".cores_in_situ" ), &cores_in_situ);
-
     long cpus_per_worker;
     PC_int(PC_get(conf, ".cpus_per_worker" ), &cpus_per_worker);
 
@@ -219,14 +216,14 @@ int main( int argc, char* argv[] )
                         "mpi_per_node", &mpi_per_node, PDI_OUT,
                          NULL);
 
-    MPI_Barrier(main_comm);
-    PDI_event("declare");
+    // Wait for the ray actors to be created to measure the time
     MPI_Barrier(main_comm);
 
     if(!pcoord_1d){
         fprintf(stderr, "%-21s%2.5f\n", "RAY_INIT_TIME:", MPI_Wtime() - start);
         start = MPI_Wtime();
     }
+
     // the main loop
     for (; ii<generations; ++ii) {
 
@@ -243,13 +240,10 @@ int main( int argc, char* argv[] )
         for (int jj=0; jj<10; ++jj){
             // compute the values for the next iteration
             iter(dsize, cur, next);
-
             // exchange data with the neighbours
             exchange(cart_comm, next);
-
             // swap the current and next values
             double (*tmp)[dsize[1]] = cur; cur = next; next = tmp;
-
             MPI_Barrier(cart_comm);
         }
 
@@ -259,10 +253,12 @@ int main( int argc, char* argv[] )
     if(!pcoord_1d)
         end = MPI_Wtime();
 
+    // Wait the analytics to be finished
     PDI_event("analyze");
     if(!pcoord_1d)
         analytics_end = MPI_Wtime();
     MPI_Barrier(main_comm);
+    // shutdown ray
     PDI_event("finish");
 
     PDI_finalize();
@@ -274,7 +270,6 @@ int main( int argc, char* argv[] )
     free(cur);
     free(next);
 
-    // finalize MPI
     if(!pcoord_1d){
         print_time(start, end, time_per_iter, generations);
         fprintf(stderr, "%-21s%.15f (avg: %.15f)\n", "SIM_WTHOUT_PDI:", no_pdi, no_pdi/generations);
@@ -284,7 +279,6 @@ int main( int argc, char* argv[] )
         fprintf(stderr, "%-21s%d\n", "ITERATIONS:", generations);
         fprintf(stderr, "%-21s%d\n", "MPI:", psize[0]*psize[1]);
         fprintf(stderr, "%-21s%d\n", "MPI_PER_NODE:", mpi_per_node);
-        fprintf(stderr, "%-21s%d\n", "CORES_IN_SITU:", cores_in_situ);
         fprintf(stderr, "%-21s%d\n", "WORKER_NODES:", workers);
         fprintf(stderr, "%-21s%d\n", "CPUS_PER_WORKER:", cpus_per_worker);
         fprintf(stderr, "%-21s%d\n", "WORKER_THREADING:", worker_threading);
@@ -292,6 +286,7 @@ int main( int argc, char* argv[] )
         // fprintf(stderr, "\nMPI FINISHED\n\n", pcoord_1d);
     }
 
+    // finalize MPI
     MPI_Finalize();
 
     return EXIT_SUCCESS;
