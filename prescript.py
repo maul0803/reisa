@@ -18,12 +18,16 @@ import sys
 # sys.argv[4] = 2 # parallelism.width
 # sys.argv[5] = 1 # generation 
 # sys.argv[6] = 1 # nworkers
+# sys.argv[7] = 1 # mpi_per_node
+# sys.argv[8] = 1 # cpus_per_worker
 
 with open('config.yml', 'w') as file:
     data = {"global_size":   {"height": int(sys.argv[1]), "width": int(sys.argv[2])},
             "parallelism":  {"height": int(sys.argv[3]), "width": int(sys.argv[4])},
             "MaxtimeSteps": int(sys.argv[5]),
-            "workers":   int(sys.argv[6])}
+            "workers":   int(sys.argv[6]),
+            "mpi_per_node":   int(sys.argv[7]),
+            "cpus_per_worker":   int(sys.argv[8])}
 if data:
     with open('config.yml', 'w') as file:
         yaml.safe_dump(data, file)

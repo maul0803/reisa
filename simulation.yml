@@ -1,4 +1,7 @@
 pdi:
+  logging:
+    level: "warn"
+
   metadata:
     pcoord_1d: int
     pcoord: { type: array, subtype: int, size: 2 }
@@ -6,6 +9,7 @@ pdi:
     dsize: { type: array, subtype: int, size: 2 }
     MaxtimeSteps: int
     timestep: int
+    mpi_per_node: int
 
   data:
     local_t:
@@ -14,72 +18,164 @@ pdi:
       size: ['$dsize[0]', '$dsize[1]']
       subsize: ['$dsize[0] - 2', '$dsize[1] - 2']
       start: [1, 1]
-    
+
   plugins:
-#    trace:
     mpi:
     pycall:
       on_event:
-
         init:
-          with: {pcoord_1d: $pcoord_1d, max: $MaxtimeSteps, dsize: $dsize}
+          with: {rank: $pcoord_1d, iterations: $MaxtimeSteps, mpi_per_node: $mpi_per_node, psize: $psize}
           exec: |
+            from datetime import datetime
+            import numpy as np
+            import netifaces
+            import logging
+            import time
             import ray
+            import sys
             import os
-            import time
+            import gc
+
+            def eprint(*args, **kwargs):
+                print(*args, file=sys.stderr, **kwargs)
+
+            # In this event we init ray, define all the tasks and create the actors
+            mpi_per_node = int(mpi_per_node)
+            ib = netifaces.ifaddresses('ib0')[netifaces.AF_INET][0]['addr'] # Infiniband address
+            concurrency=8 # Actor concurrency value
+            threshold = 0.6
+
+            ray.init(address="auto", namespace="mpi", logging_level=logging.ERROR, _node_ip_address=ib)
+            initial_status=ray._private.state.state._available_resources_per_node()
             
-            addr=os.environ.get("RAY_ADDRESS").split(":")[0]
-            filename = "outputs/output_"+str(pcoord_1d)+".txt" 
+            cg = int(concurrency*3/4)
 
-            ray.init("ray://"+addr+":10001") # , _system_config={"infiniband": {"enabled": True}}")
-
-            @ray.remote
-            class ProcessActor:
+            @ray.remote (max_restarts=-1, max_task_retries=-1, resources={"actor":1}, concurrency_groups={"store": cg, "exec": cg}) # Resource actor indicates that the actor will be running in one simulation node
+            class ProcessActor: 
                 def __init__(self):
-                    self.count = 0
+                    self.finished = False
+                    self.data_queues = [] # Simulation data will be stored here
+                    self.offset = int(rank) # Rank of the process that creates the actor
+                    self.control = [0 for _ in range(iterations)] # Number of processes that have stored the data on each iteration
+                    for i in range(mpi_per_node):
+                        self.data_queues.append([None for _ in range(iterations)])
+                    return
+                
+                def ready(self):
+                    return
 
-                def add(self):
-                    self.count += 1
-                    return self.count
+                # Method to erase memory data
+                def free_iters(self, iters):
+                    # Erase data
+                    for mpid in range(mpi_per_node):
+                        for i in iters:
+                            self.data_queues[mpid][i]=ray.put(None)
+                    gc.collect()
+                    return
+                
+                # Each MPI process will call this method every iteration for storing data
+                @ray.method(concurrency_group="store")
+                def add_value(self, mpid, result, iter):
+                    iter=int(iter)
+                    mpid=int(mpid)
+                    self.data_queues[mpid%mpi_per_node][iter]=result[0]
+                    self.control[iter] = self.control[iter]+1
+                    return
 
-                def get_count(self):
-                    return self.count
+                # The client will tell the actor to execute some tasks through this method
+                @ray.method(concurrency_group="exec")
+                def trigger(self, process_task: ray.remote_function.RemoteFunction, iter: int, RayList, kept_iters, starting_reference):
+                    iter = int(iter)
+                    tasks = RayList()
+                    
+                    # Ensure that all processes have stored its value and throwed their tasks
+                    while np.sum(self.control[:iter+1]) < (mpi_per_node*(iter+1)):
+                        pass
+                    
+                    # Remember that each actor just manages MPI_PER_NODE processes
+                    for mpid in range(mpi_per_node):
+                        # Execute one asynchronous task per process per iteration
+                        tasks.append(process_task.remote(mpid+self.offset, iter, RayList(self.data_queues[mpid][:iter+1])))
+                        
+                        # Erase non-obj_used data
+                        if iter-kept_iters > 0:
+                            self.data_queues[mpid][iter-kept_iters-1] = ray.put(None)
+                            gc.collect()
+                            
+                    return tasks
 
-            def Derivee(F, dx):
-                c0 = 2. / 3.
-                dFdx = c0 / dx * (F[3: - 1] - F[1: - 3] - (F[4:] - F[:- 4]) / 8.)
-                return dFdx
+            put_time = 0
+            actor = None
+            actorname = "ranktor"+str(rank - (rank%mpi_per_node)) # Common actor name for the processes within the same simulation node
+
+            if rank%mpi_per_node == 0: # One process per node creates the actor
+                actor = ProcessActor.options(max_concurrency=concurrency, name=actorname, namespace="mpi", lifetime="detached").remote()
+            else: # The processes which have not created the actor look for it
+                timeout = 10
+                start = time.time()
+                error = True
+                while error:
+                    try:
+                        actor = ray.get_actor(actorname, namespace="mpi")
+                        error = False
+                    except Exception as e:
+                        actor = None
+                        elapsed_time = time.time() - start
+                        if elapsed_time >= timeout:
+                            raise Exception("Cannot get the Ray actors. Simulation may break.")
+
+            # Get the base amount of memory
+
+            ray.get(actor.ready.remote())
             
-            @ray.remote (resources={'data': 0.01})
-            def derivee_task(iter, actor: ray.actor.ActorHandle, gt):
-                try:
-                  result = Derivee(gt, 1).mean()
-
-                  with open(filename, "a") as f:
-                      f.write("\nii = " + str(iter)+", node = "+str(ray.get_runtime_context().get_node_id())+ ", result = "+str(result)+"\n")
-
-                except:
-                  print("Error occurred")
-
-                actor.add.remote()
-
-                return
-            
-            actor = ProcessActor.remote()
-
         Available:
-          with: { iter_id: $timestep, source_field: $local_t}
-          exec: |
-            derivee_task.remote(iter_id, actor, ray.put(source_field))
+          with: { i: $timestep, data: $local_t}
+          exec: | 
+            # This event manages what is happening for each iteration in the simulation
 
-        finish:
-          exec: |
-            import ray
-            import time
+            stopped = False
+            while not('compute' in ray.available_resources()):
+                if not(stopped) and rank==0:
+                    eprint("[",datetime.now(), "] Simulation stopped at iteration " + str(i) + " due to computing pressure.")
+                stopped=True
             
-            while(ray.get(actor.get_count.remote()) != max):
-                time.sleep(2)
-                continue
-            with open(filename, "a") as f:
-                f.write("\n\nFinished.")
+            stopped = False
+            flag = True
+            while(flag):
+                index = 0
+                status=ray._private.state.state._available_resources_per_node()
+                for node in status:
+                    osm_used=initial_status[node]['object_store_memory']-status[node]['object_store_memory']
+                    osm_limit=initial_status[node]['object_store_memory']*threshold
+                    m_used=initial_status[node]['memory']-status[node]['memory']
+                    m_limit=initial_status[node]['memory']*threshold
+
+                    if m_used > m_limit or osm_used > osm_limit:
+                        flag = True
+                        if not(stopped) and rank==0:
+                            eprint("[",datetime.now(), "] Simulation stopped at iteration " + str(i) + " due to memory pressure.")
+                        stopped=True
+                        gc.collect()
+                        break
+                    else:
+                        flag = False
+                    index = index + 1
+
+            # Measure time spent in ray.put() instruction
+            start = time.time() 
+            d = ray.put(data, _owner=actor)
+            put_time = put_time + (time.time()-start)
+
+            # Tell the actor to save the reference of the put object
+            ray.get(actor.add_value.remote(rank, [d], i))
+
+        analyze:
+          exec: |
+            if rank == 0:
+                # Print measured values
+                eprint("{:<21}".format("GLOBAL_PUT_TIME:") + str(put_time)) # In process 0
+                eprint("{:<21}".format("ACTOR_CONCURRENCY:") + str(concurrency))
+
+          exec: |
+            ray.timeline(filename="timeline-client.json")
             ray.shutdown()
