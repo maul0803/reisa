@@ -1,9 +1,33 @@
-import ray
-import gc
+from datetime import datetime
+from math import ceil
+import itertools
 import yaml
 import time
+import ray
+import sys
+import gc
+import os
+
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
 # "Background" code for the user
+
+# This class will be the key to able the user to deserialize the data transparently
+class RayList(list):
+
+    def __getitem__(self, index): # Square brackets operation to obtain the data behind the references.
+        item = super().__getitem__(index)
+        if isinstance(index, slice):
+            return ray.get(RayList(item))
+        else:
+            return ray.get(item)
+
+# Class to manage actor answers, we need to make ray.get() to obtain a RayList
+class ActorAnswerList(list):
+    def __getitem__(self, index): # Square brackets operation to obtain the data behind the references.
+        tmp = ray.get(self)
+        return RayList(list(itertools.chain.from_iterable(tmp)))[index]
 
 class Reisa:
     def __init__(self, file, address):
@@ -11,9 +35,13 @@ class Reisa:
         self.mpi_per_node = 0
         self.mpi = 0
         self.workers = 0
+        self.actors = list()
         
         # Init Ray
-        ray.init("ray://"+address+":10001")
+        if os.environ.get("REISA_DIR"):
+            ray.init("ray://"+address+":10001", runtime_env={"working_dir": os.environ.get("REISA_DIR")})
+        else:
+            ray.init("ray://"+address+":10001", runtime_env={"working_dir": os.environ.get("PWD")})
        
         # Get the configuration of the simulatin
         with open(file, "r") as stream:
@@ -24,95 +52,77 @@ class Reisa:
                 self.mpi = data["parallelism"]["height"] * data["parallelism"]["width"]
                 self.workers = data["workers"]
             except yaml.YAMLError as e:
-                print(e)
+                eprint(e)
+
         return
     
-    def get_result(self, process_task, actor_task=None, iter_task=None, final_task=None, selected_iters=None, kept_iters=None):
-
-            # This class will be the key to able the user to deserialize the data transparently
-            class RayList(list):
-                def __call__(self): # Round brackets operation like in "queue()", obtain all the data.
-                    there_is_list = False # The array of data is an array of references
-                    for item in self: # Check if there is another list within the list
-                        if isinstance(item, RayList):
-                            there_is_list = True
-                            break
-
-                    if there_is_list:
-                        result=[]
-                        for item in self: # If there are lists deserialize each element of the list
-                            if isinstance(item, RayList):
-                                result.append(item())
-                            else:
-                                result.append(ray.get(item))
-                        return result
-                    else: # If there is not lists (regular array of references) deserialize the whole array
-                        return ray.get(self)
-
-                def __getitem__(self, index): # Square brackets operation like in queue[3], obtain the selected data.
-                    item = super().__getitem__(index)
-                    if isinstance(item, RayList):
-                        return item()
-                    else:
-                        return ray.get(item)
-                
-                def sublist(self, index1, index2): # Square brackets operation like in queue[3], obtain the selected data.
-                    refs = RayList()
-                    for i in range(index1, index2):
-                        refs.append(super().__getitem__(i))
-                    return refs()
+    def get_result(self, process_task, iter_task, selected_iters=None, kept_iters=None, timeline=False):
             
-            # Create the remote ray tasks from user functions, resources "data=1" means executed on computing nodes
-            if process_task:
-                process_task = ray.remote(max_retries=2, resources={"data":1}, scheduling_strategy="DEFAULT")(process_task)
+            start = 0 # Time variable
+            count = 0 # Iteratipn step variable
+            max_tasks = ray.available_resources()['compute']
+            if max_tasks <= self.mpi:
+                waiting_interval = 0
             else:
-                raise Exception("process_task cannot be None.")
-                return
-            if actor_task:
-                actor_task = ray.remote(max_retries=2, resources={"data":1}, scheduling_strategy="DEFAULT")(actor_task)
-            if iter_task:
-                iter_task = ray.remote(max_retries=2, resources={"data":1}, scheduling_strategy="DEFAULT")(iter_task)
-            if final_task:
-                final_task = ray.remote(max_retries=2, resources={"data":1}, scheduling_strategy="DEFAULT")(final_task)
+                waiting_interval = int(max_tasks/self.mpi)+1
+            
+            process_task = ray.remote(max_retries=-1, resources={"compute":1}, scheduling_strategy="DEFAULT")(process_task)
+            iter_task = ray.remote(max_retries=-1, resources={"compute":1, "transit":0.5}, scheduling_strategy="DEFAULT")(iter_task)
+
             if selected_iters is None:
                 selected_iters = [i for i in range(self.iterations)]
             if kept_iters is None:
-                kept_iters = int(self.iterations/4*3)
-                   
-            results = RayList([ray.put(None) for i in range(self.iterations)])
-            actors = self.get_actors()
-            start = 0
+                kept_iters = self.iterations
+            if len(selected_iters)<waiting_interval:
+                waiting_interval = 0
             
-            for i in selected_iters:
-                # Ask each actor to execute "mpi_per_node" processes_task and one actor_task if requested by the user
-                actor_references = [actor.trigger.remote(process_task, actor_task, i, RayList, kept_iters) for actor in actors]
-                # Get the answer of the actors, remember that the actors are sending back the references of the thrown tasks (future results)
-                actors_answers = RayList(ray.get(actor_references))
-                if i == selected_iters[0]:
-                    start = time.time()
-                # Execute iter_task if requested by the user and store the result
-                if iter_task:
-                    results[i] = iter_task.remote(iter, actors_answers)
-                else:
-                    results[i] = actors_answers
+            results = RayList()
+            actors = self.get_actors()
+            iterations_data = RayList([None for i in range(self.iterations)])
+            actor_references = [ray.put(None) for actor in actors]
+            
 
-            # Execute global task if requested by the user and return the value
-            if final_task:
-                tmp = ray.get(final_task.remote(results))
-            else:
-                tmp = results()
+            for count, i in enumerate(selected_iters):
+                # Ask each actor to execute "mpi_per_node" processes_task
+                actor_references = [actor.trigger.remote(process_task, i, RayList, kept_iters, actor_references[j]) for j, actor in enumerate(actors)]
+                actors_answers = ActorAnswerList(actor_references) # actor_references are references of RayLists
+                iterations_data[i] = ray.put(actors_answers) # Save the response
+                results.append(iter_task.remote(i, iterations_data)) # Save the iteration task reference
+                
+                # eprint("["+str(datetime.now())+ "] Sent ["+str(i)+"]")
+                
+                
+                if waiting_interval==0 or (count % waiting_interval == 0 and count >= waiting_interval):
+                    pressure = 100
+                    
+                    # eprint("["+str(datetime.now())+"] Waiting for ",count-waiting_interval," in iteration ",i)
+                    ray.wait([list(results)[count-waiting_interval]], num_returns=1) # Wait to avoid bottlenecks
 
-            print("{:<21}".format("ANALYTICS_TIME:") + "{:.5f}".format(time.time()-start) + " (avg:"+"{:.5f}".format((time.time()-start)/self.iterations)+")")
-            return tmp
+                    status = ray.available_resources()
+                    if 'compute' in status:
+                        pressure = max_tasks/status['compute']
+                    if pressure != 0 and pressure < 50 and waiting_interval < kept_iters:
+                        waiting_interval = waiting_interval+1
+                    elif waiting_interval > 0:
+                        waiting_interval = waiting_interval-1
+                
+                if start == 0:
+                    start = time.time() # Measure time
 
-    # Mark the analytics as finished
-    def shutdown(self):
-        self.get_actors()
-        for actor in self.actors:
-            actor.finish.remote()
-        
-        ray.timeline(filename="timeline-client.json")
-        ray.shutdown()
+
+            ray.wait(results, num_returns=len(results)) # Wait for the results
+            eprint("{:<21}".format("EST_ANALYTICS_TIME:") + "{:.5f}".format(time.time()-start) + " (avg:"+"{:.5f}".format((time.time()-start)/self.iterations)+")")
+
+            tmp = ray.get(results)
+
+            output = {} # Output dictionary
+            for i, _ in enumerate(selected_iters):
+                output[selected_iters[i]] = tmp[i]
+            
+            if timeline:
+                ray.timeline(filename="timeline-client.json")
+
+            return output
 
     # Get the actors created by the simulation
     def get_actors(self):
@@ -132,4 +142,13 @@ class Reisa:
                 if elapsed_time >= timeout:
                     raise Exception("Cannot get the Ray actors. Client is exiting")
             time.sleep(1)
+
         return self.actors
+
+    # Erase iterations from simulation memory
+    def free(self, iters: list):
+        if len(self.actors) > 0:
+            for actor in self.actors:
+                actor.free_iters.remote(iters)
+        else:
+            eprint("WARNING: forbidden \"free_iterations\" without initialize Reisa.")

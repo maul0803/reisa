@@ -24,21 +24,20 @@ echo -e "Running in $MAIN_DIR\n"
 pdirun make -B simulation
 
 # MPI VALUES
-PARALLELISM1=4 # MPI nodes axis x
-PARALLELISM2=4 # MPI nodes axis y
-MPI_PER_NODE=4 # MPI processes per simulation node
+PARALLELISM1=8 # MPI nodes axis x
+PARALLELISM2=8 # MPI nodes axis y
+MPI_PER_NODE=16 # MPI processes per simulation node
 
 # DATASIZE
 DATASIZE1=$((4000*$PARALLELISM1)) # Number of elements axis x
 DATASIZE2=$((4000*$PARALLELISM2)) # Number of elements axis y
 
 # STEPS
-GENERATION=10 # Number of iterations on the simulation
+GENERATION=250 # Number of iterations on the simulation
 
 # ANALYTICS HARDWARE
-WORKER_NODES=$(($PARALLELISM1*$PARALLELISM2/4)) # DEISA uses the total amount of MPI processes/4
-CPUS_PER_WORKER=24
-WORKER_THREADING=2 # DEISA uses 24 threads/worker and 2 workers/node -> we will use 48 threads per node as well
+WORKER_NODES=$(($PARALLELISM1*$PARALLELISM2/16)) # DEISA uses (MPI_PROCESSES/4) worker nodes  with 48 threads each one
+CPUS_PER_WORKER=32 # 24 # Parallelism on each worker
 
 # AUXILIAR VALUES
 SIMUNODES=$(($PARALLELISM2 * $PARALLELISM1 / $MPI_PER_NODE)) # NUMBER OF SIMULATION NODES
@@ -48,7 +47,7 @@ NPROC=$(($PARALLELISM2 * $PARALLELISM1 + $NNODES + 1)) # NUMBER OF DEPLOYED TASK
 # MANAGING FILES
 date=$(date +%Y-%m-%d_%X)
 OUTPUT=outputs/$date
-`which python` prescript.py $DATASIZE1 $DATASIZE2 $PARALLELISM1 $PARALLELISM2 $GENERATION $WORKER_NODES $MPI_PER_NODE $CPUS_PER_WORKER $WORKER_THREADING
+`which python` prescript.py $DATASIZE1 $DATASIZE2 $PARALLELISM1 $PARALLELISM2 $GENERATION $WORKER_NODES $MPI_PER_NODE $CPUS_PER_WORKER $WORKER_THREADING # Create config.yml
 mkdir -p $OUTPUT
 mkdir logs 2>/dev/null
 touch logs/jobs.log
@@ -57,5 +56,5 @@ cp *.yml client.py reisa.py simulation Script.sh $OUTPUT
 # RUNNING
 cd $OUTPUT
 echo $1 > comment.txt
-echo -e "Executing $(sbatch --parsable --qos=normal -N $NNODES --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER $WORKER_THREADING) in $OUTPUT" >> $MAIN_DIR/logs/jobs.log
+echo -e "Executing $(sbatch --parsable -N $NNODES --partition cpu_short --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER) in $OUTPUT" >> $MAIN_DIR/logs/jobs.log
 cd $MAIN_DIR
