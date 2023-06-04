@@ -11,3 +11,11 @@ message.sh
 derivative.py
 cluster.yaml
 client.py
+address.var
+get_times.sh
+memory.log
+notas.txt
+processed.log
+status.log
+__pycache__/reisa.cpython-310.pyc
+logs/jobs.log
