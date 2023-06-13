@@ -24,37 +24,39 @@ echo -e "Running in $MAIN_DIR\n"
 pdirun make -B simulation
 
 # MPI VALUES
-PARALLELISM1=8 # MPI nodes axis x
-PARALLELISM2=8 # MPI nodes axis y
+PARALLELISM1=4 # MPI nodes axis x
+PARALLELISM2=4 # MPI nodes axis y
 MPI_PER_NODE=16 # MPI processes per simulation node
 
 # DATASIZE
 DATASIZE1=$((4000*$PARALLELISM1)) # Number of elements axis x
 DATASIZE2=$((4000*$PARALLELISM2)) # Number of elements axis y
 
-# STEPS
-GENERATION=250 # Number of iterations on the simulation
+# STEPS 
+GENERATION=10 # Number of iterations on the simulation
 
 # ANALYTICS HARDWARE
-WORKER_NODES=$(($PARALLELISM1*$PARALLELISM2/16)) # DEISA uses (MPI_PROCESSES/4) worker nodes  with 48 threads each one
-CPUS_PER_WORKER=32 # 24 # Parallelism on each worker
+WORKER_NODES=4 # DEISA uses (MPI_PROCESSES/4) worker nodes  with 48 threads each one
+CPUS_PER_WORKER=40 # 24 # Parallelism on each worker
 
 # AUXILIAR VALUES
 SIMUNODES=$(($PARALLELISM2 * $PARALLELISM1 / $MPI_PER_NODE)) # NUMBER OF SIMULATION NODES
 NNODES=$(($WORKER_NODES + $SIMUNODES + 1)) # WORKERS + HEAD + SIMULATION (CLIENT WILL BE WITHIN THE HEAD NODE)
 NPROC=$(($PARALLELISM2 * $PARALLELISM1 + $NNODES + 1)) # NUMBER OF DEPLOYED TASKS (MPI + ALL RAY INSTANCES + CLIENT)
+MPI_TASKS=$(($PARALLELISM2 * $PARALLELISM1)) # NUMBER OF DEPLOYED TASKS (MPI + ALL RAY INSTANCES + CLIENT)
+GLOBAL_SIZE=$(($DATASIZE1 * $DATASIZE2 * 8 / 1000000)) # NUMBER OF DEPLOYED TASKS (MPI + ALL RAY INSTANCES + CLIENT)
+LOCAL_SIZE=$(($GLOBAL_SIZE / $MPI_TASKS)) # NUMBER OF DEPLOYED TASKS (MPI + ALL RAY INSTANCES + CLIENT)
 
 # MANAGING FILES
 date=$(date +%Y-%m-%d_%X)
-OUTPUT=outputs/$date
+OUTPUT=outputs/$date\_P$MPI_TASKS\_SN$SIMUNODES\_LS$LOCAL_SIZE\_GS$GLOBAL_SIZE\_I$GENERATION\_AN$WORKER_NODES
 `which python` prescript.py $DATASIZE1 $DATASIZE2 $PARALLELISM1 $PARALLELISM2 $GENERATION $WORKER_NODES $MPI_PER_NODE $CPUS_PER_WORKER $WORKER_THREADING # Create config.yml
 mkdir -p $OUTPUT
 mkdir logs 2>/dev/null
 touch logs/jobs.log
-cp *.yml client.py reisa.py simulation Script.sh $OUTPUT
+cp *.yml *.py simulation Script.sh $OUTPUT
 
 # RUNNING
 cd $OUTPUT
-echo $1 > comment.txt
-echo -e "Executing $(sbatch --parsable -N $NNODES --partition cpu_short --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER) in $OUTPUT" >> $MAIN_DIR/logs/jobs.log
+echo -e "Executing $(sbatch --parsable -N $NNODES --partition cpu_short --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER) in $PWD    " >> $MAIN_DIR/logs/jobs.log
 cd $MAIN_DIR

@@ -21,21 +21,27 @@ max = handler.iterations
     
 # Process-level analytics code
 def process_func(rank: int, i: int, queue):
-    gt = np.array(queue[i])
-    return np.sum(gt)
+    # "queue" will be the available data for "rank" process since the simulation has started (from iteration 0 to "i")
+    # We must take into acount that some data will be erased to free memory
+    gt = np.array(queue[-5:])
+    c0 = 2. / 3.
+    return np.average(c0 / 1 * (gt[3] - gt[1] - (gt[4] - gt[0]) / 8.))
 
 # Iteration-level analytics code
-def iter_func(i: int, current_results, previous_iterations):
-    return np.sum(current_results[:])
+def iter_func(i: int, current_results):
+    return np.average(current_results[:])
+
+def global_func(final_results):
+    return np.average(final_results[:])
 
 # The iterations that will be executed (from 0 to end by default), in this case we will need 4 available timesteps
-iterations = [i for i in range(0, max)]
+iterations = [i for i in range(4, max)]
 
 # Launch the analytics (blocking operation), kept iters paramerter means the number of iterations kept in memory before the current iteration
-result = handler.get_result(process_func, iter_func, selected_iters=iterations, kept_iters=1, timeline=False)
+result = handler.get_result(process_func, iter_func, global_func=global_func, selected_iters=iterations, kept_iters=5, timeline=False)
 
 # Write the results
 with open("results.log", "a") as f:
-    f.write("\nResults per iteration: "+str(result)+".\n")
+    f.write("\nResult: "+str(result)+".\n")
 
 handler.shutdown()

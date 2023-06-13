@@ -179,7 +179,7 @@ int main( int argc, char* argv[] )
 
     // our loop counter so as to be able to use it outside the loop
     int ii=0;
-    double start, end, analytics_end, no_pdi, no_pdi_step;
+    double start, end, no_pdi, no_pdi_step;
 
     if(!pcoord_1d){
         start = MPI_Wtime();
@@ -208,9 +208,9 @@ int main( int argc, char* argv[] )
     // the main loop
     for (; ii<generations; ++ii) {
 
-        if(!pcoord_1d && ii % module == 0){
+        if(!pcoord_1d && ii % module == 0)
             fprintf(stderr, "Iter [%d]\n", ii);
-        }
+
         PDI_multi_expose("Available",
                  "timestep",         &ii, PDI_OUT,
                  "local_t", cur, PDI_OUT,
@@ -232,14 +232,7 @@ int main( int argc, char* argv[] )
     if(!pcoord_1d)
         end = MPI_Wtime();
 
-    // Wait the analytics to be finished
-    PDI_event("analyze");
-    if(!pcoord_1d)
-        analytics_end = MPI_Wtime();
-    MPI_Barrier(main_comm);
-    // shutdown ray
     PDI_event("finish");
-
     PDI_finalize();
 
     // destroy the paraconf configuration tree
@@ -253,8 +246,8 @@ int main( int argc, char* argv[] )
         fprintf(stderr,"%-21s%.15f (avg: %.15f)\n", "SIMULATION_TIME:", end-start, (end-start)/generations);
         fprintf(stderr, "%-21s%.15f (avg: %.15f)\n", "SIM_WTHOUT_PDI:", no_pdi, no_pdi/generations);
         fprintf(stderr, "%-21s%.15f (avg: %.15f)\n\n", "PDI_DELAY:", end-start-no_pdi, (end-start-no_pdi)/generations);
-        fprintf(stderr, "%-21s%.0f\n", "PROBLEM_SIZE:", (double) global_size[0] * (double) global_size[1]);
-        fprintf(stderr, "%-21s%.0f\n", "MB_PER_PROCESS:", (float) (global_size[0]/psize[0])*(global_size[1]/psize[1])*sizeof(double)/1000000);
+        fprintf(stderr, "%-21s%.0f\n", "GLOBAL_SIZE_(GiB):", (float) global_size[0] * (float) global_size[1] / (1024) * sizeof(double));
+        fprintf(stderr, "%-21s%.0f\n", "LOCAL_SIZE_(MiB):", (float) (global_size[0]/psize[0])*(global_size[1]/psize[1])*sizeof(double)/(1024*1024));
         fprintf(stderr, "%-21s%ld\n\n", "ITERATIONS:", generations);
         fprintf(stderr, "%-21s%ld\n", "MPI_PER_NODE:", mpi_per_node);
         fprintf(stderr, "%-21s%ld\n\n", "MPI_PARALLELISM:", psize[0]*psize[1]);

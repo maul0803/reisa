@@ -13,3 +13,4 @@ Makefile
 config.yml
 address.var
 get_times.sh
+exp_aux.sh

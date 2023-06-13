@@ -15,6 +15,12 @@ def eprint(*args, **kwargs):
 
 # This class will be the key to able the user to deserialize the data transparently
 class RayList(list):
+    def __call__(self, index): # Square brackets operation to obtain the data behind the references.
+        item = super().__getitem__(index)
+        if isinstance(index, slice):
+            free(item)
+        else:
+            free([item])
 
     def __getitem__(self, index): # Square brackets operation to obtain the data behind the references.
         item = super().__getitem__(index)
@@ -29,11 +35,21 @@ class ActorAnswerList(list):
         tmp = ray.get(self)
         return RayList(list(itertools.chain.from_iterable(tmp)))[index]
 
+# This class will be the key to able the user to deserialize the data transparently
+class RayDict(dict):
+    def __getitem__(self, key): # Square brackets operation to obtain the data behind the references.
+        if isinstance(key, slice):
+            return ray.get(RayList(self.values()))
+        else:
+            item = super().__getitem__(key)
+            return ray.get(item)
+
 class Reisa:
     def __init__(self, file, address):
         self.iterations = 0
         self.mpi_per_node = 0
         self.mpi = 0
+        self.datasize = 0
         self.workers = 0
         self.actors = list()
         
@@ -51,73 +67,55 @@ class Reisa:
                 self.mpi_per_node = data["mpi_per_node"]
                 self.mpi = data["parallelism"]["height"] * data["parallelism"]["width"]
                 self.workers = data["workers"]
+                self.datasize = data["global_size"]["height"] * data["global_size"]["width"]
             except yaml.YAMLError as e:
                 eprint(e)
 
         return
     
-    def get_result(self, process_task, iter_task, selected_iters=None, kept_iters=None, timeline=False):
+    def get_result(self, process_func, iter_func, global_func=None, selected_iters=None, kept_iters=None, timeline=False):
             
-            start = 0 # Time variable
-            count = 0 # Iteratipn step variable
-            max_tasks = ray.available_resources()['compute']
-            if max_tasks <= self.mpi:
-                waiting_interval = 0
-            else:
-                waiting_interval = int(max_tasks/self.mpi)+1
+        max_tasks = ray.available_resources()['compute']
+        results = list()
+        actors = self.get_actors()
+        
+        if selected_iters is None:
+            selected_iters = [i for i in range(self.iterations)]
+        if kept_iters is None:
+            kept_iters = self.iterations
+
+        # process_task = ray.remote(max_retries=-1, resources={"compute":1}, scheduling_strategy="DEFAULT")(process_func)
+        # iter_task = ray.remote(max_retries=-1, resources={"compute":1, "transit":0.5}, scheduling_strategy="DEFAULT")(iter_func)
+
+        @ray.remote(max_retries=-1, resources={"compute":1}, scheduling_strategy="DEFAULT")
+        def process_task(rank: int, i: int, queue):
+            return process_func(rank, i, queue)
             
-            process_task = ray.remote(max_retries=-1, resources={"compute":1}, scheduling_strategy="DEFAULT")(process_task)
-            iter_task = ray.remote(max_retries=-1, resources={"compute":1, "transit":0.5}, scheduling_strategy="DEFAULT")(iter_task)
+        iter_ratio=1/ceil(max_tasks/self.mpi)
 
-            if selected_iters is None:
-                selected_iters = [i for i in range(self.iterations)]
-            if kept_iters is None:
-                kept_iters = self.iterations
-            if len(selected_iters)<waiting_interval:
-                waiting_interval = 0
+        @ray.remote(max_retries=-1, resources={"compute":1, "transit":iter_ratio}, scheduling_strategy="DEFAULT")
+        def iter_task(i: int, actors):
+            current_results = [actor.trigger.remote(process_task, i) for j, actor in enumerate(actors)]
+            current_results = ray.get(current_results)
             
-            results = RayList()
-            actors = self.get_actors()
-            iterations_data = RayList([None for i in range(self.iterations)])
-            actor_references = [ray.put(None) for actor in actors]
+            if i >= kept_iters-1:
+                [actor.free_mem.remote(current_results[j], i-kept_iters+1) for j, actor in enumerate(actors)]
             
+            return iter_func(i, RayList(itertools.chain.from_iterable(current_results)))
 
-            for count, i in enumerate(selected_iters):
-                # Ask each actor to execute "mpi_per_node" processes_task
-                actor_references = [actor.trigger.remote(process_task, i, RayList, kept_iters, actor_references[j]) for j, actor in enumerate(actors)]
-                actors_answers = ActorAnswerList(actor_references) # actor_references are references of RayLists
-                iterations_data[i] = ray.put(actors_answers) # Save the response
-                results.append(iter_task.remote(i, iterations_data)) # Save the iteration task reference
-                
-                # eprint("["+str(datetime.now())+ "] Sent ["+str(i)+"]")
-                
-                
-                if waiting_interval==0 or (count % waiting_interval == 0 and count >= waiting_interval):
-                    pressure = 100
-                    
-                    # eprint("["+str(datetime.now())+"] Waiting for ",count-waiting_interval," in iteration ",i)
-                    ray.wait([list(results)[count-waiting_interval]], num_returns=1) # Wait to avoid bottlenecks
-
-                    status = ray.available_resources()
-                    if 'compute' in status:
-                        pressure = max_tasks/status['compute']
-                    if pressure != 0 and pressure < 50 and waiting_interval < kept_iters:
-                        waiting_interval = waiting_interval+1
-                    elif waiting_interval > 0:
-                        waiting_interval = waiting_interval-1
-                
-                if start == 0:
-                    start = time.time() # Measure time
-
-
-            ray.wait(results, num_returns=len(results)) # Wait for the results
-            eprint("{:<21}".format("EST_ANALYTICS_TIME:") + "{:.5f}".format(time.time()-start) + " (avg:"+"{:.5f}".format((time.time()-start)/self.iterations)+")")
-
+        start = time.time() # Measure time
+        results = [iter_task.remote(i, actors) for i in selected_iters]
+        ray.wait(results, num_returns=len(results)) # Wait for the results
+        eprint("{:<21}".format("EST_ANALYTICS_TIME:") + "{:.5f}".format(time.time()-start) + " (avg:"+"{:.5f}".format((time.time()-start)/self.iterations)+")")
+        if global_func:
+            return global_func(RayList(results))
+        else:
             tmp = ray.get(results)
-
             output = {} # Output dictionary
+
             for i, _ in enumerate(selected_iters):
-                output[selected_iters[i]] = tmp[i]
+                if tmp[i] is not None:
+                    output[selected_iters[i]] = tmp[i]
             
             if timeline:
                 ray.timeline(filename="timeline-client.json")
@@ -146,9 +144,8 @@ class Reisa:
         return self.actors
 
     # Erase iterations from simulation memory
-    def free(self, iters: list):
-        if len(self.actors) > 0:
+    def shutdown(self):
+        if self.actors:
             for actor in self.actors:
-                actor.free_iters.remote(iters)
-        else:
-            eprint("WARNING: forbidden \"free_iterations\" without initialize Reisa.")
+                ray.kill(actor)
+            ray.shutdown()

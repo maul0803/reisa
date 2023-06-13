@@ -25,13 +25,13 @@ def process_func(rank: int, i: int, queue):
     return np.sum(gt)
 
 # Iteration-level analytics code
-def iter_func(i: int, current_results, previous_iterations):
+def iter_func(i: int, current_results):
     return np.sum(current_results[:])
 
 # The iterations that will be executed (from 0 to end by default), in this case we will need 4 available timesteps
 iterations = [i for i in range(0, max)]
 
-# Launch the analytics (blocking operation), kept iters paramerter means the number of iterations kept in memory before the current iteration
+#Launch analytics (blocking operation), kept iters paramerter means the number of iterations kept in memory before the current iteration
 result = handler.get_result(process_func, iter_func, selected_iters=iterations, kept_iters=1, timeline=False)
 
 # Write the results
