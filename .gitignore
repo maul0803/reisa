@@ -6,7 +6,6 @@ outputs/**
 logs/**
 __pycache__/**
 
-reisa.py
 simulation
 cmake_install.cmake
 Makefile

@@ -45,7 +45,7 @@ pdi:
             mpi_per_node = int(mpi_per_node)
             ib = netifaces.ifaddresses('ib0')[netifaces.AF_INET][0]['addr'] # Infiniband address
             concurrency=8 # Actor concurrency value
-            threshold = 0.75
+            threshold = 0.5
             ray.init(address="auto", namespace="mpi", logging_level=logging.ERROR, _node_ip_address=ib)
             initial_status=ray._private.state.state._available_resources_per_node()
             
@@ -70,7 +70,7 @@ pdi:
                 def free_mem(self, dep, i):
                     ray.wait(dep, num_returns=len(dep))
                     refs = [self.data_queues[mpid][i] for mpid in range(mpi_per_node)]
-                    free(refs)
+                    free(refs, local_only=True)
                     for mpid in range(mpi_per_node):
                         self.data_queues[mpid][i] = None
                     del refs
@@ -149,9 +149,9 @@ pdi:
 
                     if m_used > m_limit or osm_used > osm_limit:
                         flag = True
-                        if not(stopped) and rank==0:
-                            eprint("["+str(datetime.now())+"]", m_used, ">", m_limit, "or", osm_used, ">", osm_limit)
-                            eprint("["+str(datetime.now())+"] Simulation stopped at iteration " + str(i) + " due to memory pressure.")
+                        # if not(stopped) and rank==0:
+                            # eprint("["+str(datetime.now())+"]", m_used, ">", m_limit, "or", osm_used, ">", osm_limit)
+                            # eprint("["+str(datetime.now())+"] Simulation stopped at iteration " + str(i) + " due to memory pressure.")
                         stopped=True
                         break
                     else:

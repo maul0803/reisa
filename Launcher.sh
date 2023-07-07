@@ -24,19 +24,19 @@ echo -e "Running in $MAIN_DIR\n"
 pdirun make -B simulation
 
 # MPI VALUES
-PARALLELISM1=4 # MPI nodes axis x
-PARALLELISM2=4 # MPI nodes axis y
-MPI_PER_NODE=16 # MPI processes per simulation node
+PARALLELISM1=8 # MPI nodes axis x
+PARALLELISM2=16 # MPI nodes axis y
+MPI_PER_NODE=32 # MPI processes per simulation node
 
 # DATASIZE
-DATASIZE1=$((4000*$PARALLELISM1)) # Number of elements axis x
-DATASIZE2=$((4000*$PARALLELISM2)) # Number of elements axis y
+DATASIZE1=$((256*$PARALLELISM1)) # Number of elements axis x
+DATASIZE2=$((512*$PARALLELISM2)) # Number of elements axis y
 
 # STEPS 
-GENERATION=10 # Number of iterations on the simulation
+GENERATION=25 # Number of iterations on the simulation
 
 # ANALYTICS HARDWARE
-WORKER_NODES=4 # DEISA uses (MPI_PROCESSES/4) worker nodes  with 48 threads each one
+WORKER_NODES=2 # DEISA uses (MPI_PROCESSES/4) worker nodes  with 48 threads each one
 CPUS_PER_WORKER=40 # 24 # Parallelism on each worker
 
 # AUXILIAR VALUES
@@ -58,5 +58,5 @@ cp *.yml *.py simulation Script.sh $OUTPUT
 
 # RUNNING
 cd $OUTPUT
-echo -e "Executing $(sbatch --parsable -N $NNODES --partition cpu_short --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER) in $PWD    " >> $MAIN_DIR/logs/jobs.log
+echo -e "Executing $(sbatch --parsable -N $NNODES --mincpus=40 --partition cpu_short --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER) in $PWD    " >> $MAIN_DIR/logs/jobs.log
 cd $MAIN_DIR

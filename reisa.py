@@ -29,21 +29,6 @@ class RayList(list):
         else:
             return ray.get(item)
 
-# Class to manage actor answers, we need to make ray.get() to obtain a RayList
-class ActorAnswerList(list):
-    def __getitem__(self, index): # Square brackets operation to obtain the data behind the references.
-        tmp = ray.get(self)
-        return RayList(list(itertools.chain.from_iterable(tmp)))[index]
-
-# This class will be the key to able the user to deserialize the data transparently
-class RayDict(dict):
-    def __getitem__(self, key): # Square brackets operation to obtain the data behind the references.
-        if isinstance(key, slice):
-            return ray.get(RayList(self.values()))
-        else:
-            item = super().__getitem__(key)
-            return ray.get(item)
-
 class Reisa:
     def __init__(self, file, address):
         self.iterations = 0
@@ -91,7 +76,7 @@ class Reisa:
         def process_task(rank: int, i: int, queue):
             return process_func(rank, i, queue)
             
-        iter_ratio=1/ceil(max_tasks/self.mpi)
+        iter_ratio=1/(ceil(max_tasks/self.mpi)*2)
 
         @ray.remote(max_retries=-1, resources={"compute":1, "transit":iter_ratio}, scheduling_strategy="DEFAULT")
         def iter_task(i: int, actors):

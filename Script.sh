@@ -42,7 +42,7 @@ echo -e "Initing Ray (1 head node + $WORKER_NUM worker nodes + $NUM_SIM_NODES si
 
 # GET HEAD NODE INFO
 head_node=${NODES_ARRAY[0]}
-    head_node_ip=$(srun -N 1 -n 1 --relative=0 echo $(ip -f inet addr show ib0 | sed -En -e 's/.*inet ([0-9.]+).*/\1/p') &)
+    head_node_ip=$(srun -N 1 -n 1 --relative=0 echo $(/sbin/ip -f inet addr show ib0 | sed -En -e 's/.*inet ([0-9.]+).*/\1/p') &)
 ulimit -n 16384 >> reisa.log
 port=6379
 echo -e "Head node: $head_node_ip:$port\n"
@@ -69,14 +69,14 @@ for ((i = 1; i <= WORKER_NUM; i++)); do
     node_i=${NODES_ARRAY[$i]}
     srun --nodes=1 --ntasks=1 --relative=$i --cpus-per-task=$CPUS_PER_WORKER --mem=128G \
         ray start --address $RAY_ADDRESS --redis-password "$REDIS_PASSWORD" \
-        --num-cpus $CPUS_PER_WORKER --block --resources="{\"compute\": ${CPUS_PER_WORKER}, \"transit\": 1}" --object-store-memory=$((96*10**9)) 1>/dev/null 2>&1 &
+        --num-cpus $(($CPUS_PER_WORKER)) --block --resources="{\"compute\": ${CPUS_PER_WORKER}, \"transit\": 1}" --object-store-memory=$((96*10**9)) 1>/dev/null 2>&1 &
 done
 
 
 # START RAY IN SIMULATION NODES
 for ((; i < $SLURM_JOB_NUM_NODES; i++)); do
     node_i=${NODES_ARRAY[$i]}
-    srun  --nodes=1 --ntasks=1 --relative=$i --cpus-per-task=$(($MPI_PER_NODE+2)) --mem=128G \
+    srun  --nodes=1 --ntasks=1 --relative=$i --cpus-per-task=$((1+$IN_SITU_RESOURCES)) --mem=128G \
       ray start --address $RAY_ADDRESS --redis-password "$REDIS_PASSWORD" \
       --num-cpus=$((1+$IN_SITU_RESOURCES)) --block --resources="{\"actor\": 1, \"compute\": ${IN_SITU_RESOURCES}}" --object-store-memory $((96*10**9))  1>/dev/null 2>&1 &
 done
