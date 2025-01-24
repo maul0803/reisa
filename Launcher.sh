@@ -2,6 +2,12 @@
 
 # spack load pdiplugin-pycall@1.6.0 pdiplugin-mpi@1.6.0;
 
+PDI_PREFIX=${HOME}/opt/pdi
+export PATH=${PDI_PREFIX}/bin:${PATH}
+
+#PARTITION=cpu_short    # Ruche
+PARTITION=short         # FT3
+
 MAIN_DIR=$PWD
 
 GR='\033[0;32m'
@@ -48,7 +54,7 @@ GLOBAL_SIZE=$(($DATASIZE1 * $DATASIZE2 * 8 / 1000000)) # NUMBER OF DEPLOYED TASK
 LOCAL_SIZE=$(($GLOBAL_SIZE / $MPI_TASKS)) # NUMBER OF DEPLOYED TASKS (MPI + ALL RAY INSTANCES + CLIENT)
 
 # MANAGING FILES
-date=$(date +%Y-%m-%d_%X)
+date=$(date +%Y-%m-%d_%R)
 OUTPUT=outputs/$date\_P$MPI_TASKS\_SN$SIMUNODES\_LS$LOCAL_SIZE\_GS$GLOBAL_SIZE\_I$GENERATION\_AN$WORKER_NODES
 `which python` prescript.py $DATASIZE1 $DATASIZE2 $PARALLELISM1 $PARALLELISM2 $GENERATION $WORKER_NODES $MPI_PER_NODE $CPUS_PER_WORKER $WORKER_THREADING # Create config.yml
 mkdir -p $OUTPUT
@@ -58,5 +64,6 @@ cp *.yml *.py simulation Script.sh $OUTPUT
 
 # RUNNING
 cd $OUTPUT
-echo -e "Executing $(sbatch --parsable -N $NNODES --mincpus=40 --partition cpu_short --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER) in $PWD    " >> $MAIN_DIR/logs/jobs.log
+echo -e "Executing sbatch --parsable -N $NNODES --mincpus=40 --partition ${PARTITION} --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER) in $PWD    "
+echo -e "Executing $(sbatch --parsable -N $NNODES --mincpus=40 --partition ${PARTITION} --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CPUS_PER_WORKER) in $PWD    " >> $MAIN_DIR/logs/jobs.log
 cd $MAIN_DIR
