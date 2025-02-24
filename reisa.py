@@ -9,13 +9,29 @@ import gc
 import os
 
 def eprint(*args, **kwargs):
+    """
+    Print messages to the standard error stream.
+
+    :param args: Positional arguments to print.
+    :param kwargs: Keyword arguments for the print function.
+    """
     print(*args, file=sys.stderr, **kwargs)
 
 # "Background" code for the user
 
 # This class will be the key to able the user to deserialize the data transparently
 class RayList(list):
+    """
+    A custom list that interacts with Ray objects, allowing for transparent
+    deserialization of remote references.
+    """
+
     def __call__(self, index): # Square brackets operation to obtain the data behind the references.
+        """
+        Retrieve data from Ray references when accessed via square brackets.
+
+        :param index: The index or slice of the list to retrieve.
+        """
         item = super().__getitem__(index)
         if isinstance(index, slice):
             free(item)
@@ -23,6 +39,12 @@ class RayList(list):
             free([item])
 
     def __getitem__(self, index): # Square brackets operation to obtain the data behind the references.
+        """
+        Get an item from the list while retrieving Ray objects.
+
+        :param index: Index or slice to retrieve.
+        :return: The retrieved item(s).
+        """
         item = super().__getitem__(index)
         if isinstance(index, slice):
             return ray.get(RayList(item))
@@ -30,7 +52,18 @@ class RayList(list):
             return ray.get(item)
 
 class Reisa:
+    """
+    A class that initializes and manages a Ray-based simulation environment.
+    """
+
     def __init__(self, file, address):
+        """
+        Initialize the Reisa simulation by reading configuration parameters
+        from a YAML file and setting up Ray.
+
+        :param file: Path to the YAML configuration file.
+        :param address: Address of the Ray cluster.
+        """
         self.iterations = 0
         self.mpi_per_node = 0
         self.mpi = 0
@@ -38,13 +71,13 @@ class Reisa:
         self.workers = 0
         self.actors = list()
         
-        # Init Ray
+        # Initialize Ray
         if os.environ.get("REISA_DIR"):
             ray.init("ray://"+address+":10001", runtime_env={"working_dir": os.environ.get("REISA_DIR")})
         else:
             ray.init("ray://"+address+":10001", runtime_env={"working_dir": os.environ.get("PWD")})
        
-        # Get the configuration of the simulatin
+        # Load simulation configuration
         with open(file, "r") as stream:
             try:
                 data = yaml.safe_load(stream)
@@ -59,9 +92,18 @@ class Reisa:
         return
     
     def get_result(self, process_func, iter_func, global_func=None, selected_iters=None, kept_iters=None, timeline=False):
-            
+        """
+        Execute a simulation and collect results.
+
+        :param process_func: Function to process individual simulation steps.
+        :param iter_func: Function to process iterations.
+        :param global_func: (Optional) Function to process all results at the end.
+        :param selected_iters: (Optional) List of iterations to execute.
+        :param kept_iters: (Optional) Number of iterations to keep in memory.
+        :param timeline: (Optional) If True, generate a Ray timeline.
+        :return: Processed results as a dictionary or global function output.
+        """
         max_tasks = ray.available_resources()['compute']
-        results = list()
         actors = self.get_actors()
         
         if selected_iters is None:
@@ -74,12 +116,27 @@ class Reisa:
 
         @ray.remote(max_retries=-1, resources={"compute":1}, scheduling_strategy="DEFAULT")
         def process_task(rank: int, i: int, queue):
+            """
+            Remote function to process a simulation step.
+
+            :param rank: Rank of the process.
+            :param i: Current iteration.
+            :param queue: Task queue.
+            :return: Processed result.
+            """
             return process_func(rank, i, queue)
             
         iter_ratio=1/(ceil(max_tasks/self.mpi)*2)
 
         @ray.remote(max_retries=-1, resources={"compute":1, "transit":iter_ratio}, scheduling_strategy="DEFAULT")
         def iter_task(i: int, actors):
+            """
+            Remote function to process an iteration.
+
+            :param i: Current iteration index.
+            :param actor: Ray actor managing the simulation.
+            :return: Processed iteration result.
+            """
             current_results = [actor.trigger.remote(process_task, i) for j, actor in enumerate(actors)]
             current_results = ray.get(current_results)
             
@@ -91,17 +148,16 @@ class Reisa:
         start = time.time() # Measure time
         results = [iter_task.remote(i, actors) for i in selected_iters]
         ray.wait(results, num_returns=len(results)) # Wait for the results
-        eprint("{:<21}".format("EST_ANALYTICS_TIME:") + "{:.5f}".format(time.time()-start) + " (avg:"+"{:.5f}".format((time.time()-start)/self.iterations)+")")
+
+        eprint("{:<21}".format("EST_ANALYTICS_TIME:") + "{:.5f}".format(time.time() - start) +
+               " (avg:" + "{:.5f}".format((time.time() - start) / self.iterations) + ")")
+
         if global_func:
             return global_func(RayList(results))
         else:
             tmp = ray.get(results)
-            output = {} # Output dictionary
+            output = {selected_iters[i]: tmp[i] for i in range(len(selected_iters)) if tmp[i] is not None}
 
-            for i, _ in enumerate(selected_iters):
-                if tmp[i] is not None:
-                    output[selected_iters[i]] = tmp[i]
-            
             if timeline:
                 ray.timeline(filename="timeline-client.json")
 
@@ -109,6 +165,12 @@ class Reisa:
 
     # Get the actors created by the simulation
     def get_actors(self):
+        """
+        Retrieve the Ray actor managing the simulation.
+
+        :return: The Ray actor.
+        :raises Exception: If the actor is not available after a timeout period.
+        """
         timeout = 60
         start_time = time.time()
         error = True
@@ -128,8 +190,12 @@ class Reisa:
 
         return self.actors
 
-    # Erase iterations from simulation memory
     def shutdown(self):
+        """
+        Shut down the simulation by killing the Ray actor and shutting down Ray.
+
+        :return: None
+        """
         if self.actors:
             for actor in self.actors:
                 ray.kill(actor)
