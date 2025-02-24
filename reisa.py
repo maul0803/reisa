@@ -121,7 +121,7 @@ class Reisa:
 
             :param rank: Rank of the process.
             :param i: Current iteration.
-            :param queue: Task queue.
+            :param queue: Data queue containing simulation values.
             :return: Processed result.
             """
             return process_func(rank, i, queue)
@@ -134,7 +134,7 @@ class Reisa:
             Remote function to process an iteration.
 
             :param i: Current iteration index.
-            :param actor: Ray actor managing the simulation.
+            :param actors: list of Ray actors managing the simulation.
             :return: Processed iteration result.
             """
             current_results = [actor.trigger.remote(process_task, i) for j, actor in enumerate(actors)]
@@ -163,36 +163,32 @@ class Reisa:
 
             return output
 
-    # Get the actors created by the simulation
-    def get_actors(self):
+    def get_actor(self):
         """
-        Retrieve the Ray actor managing the simulation.
+        Retrieve the Ray actors managing the simulation.
 
-        :return: The Ray actor.
-        :raises Exception: If the actor is not available after a timeout period.
+        :return: A list of Ray actors.
+        :raises Exception: If one of the Ray actors is not available after a timeout period.
         """
         timeout = 60
         start_time = time.time()
-        error = True
         self.actors = list()
-        while error:
+        while True:
             try:
                 for rank in range(0, self.mpi, self.mpi_per_node):
                     self.actors.append(ray.get_actor("ranktor"+str(rank), namespace="mpi"))
-                error = False
-            except Exception as e:
-                self.actors=list()
-                end_time = time.time()
-                elapsed_time = end_time - start_time
-                if elapsed_time >= timeout:
-                    raise Exception("Cannot get the Ray actors. Client is exiting")
+                return self.actors
+            except Exception:
+                self.actors = list()
+                if time.time() - start_time >= timeout:
+                    raise Exception("Cannot get the Ray actors. Client is exiting.")
             time.sleep(1)
 
-        return self.actors
+
 
     def shutdown(self):
         """
-        Shut down the simulation by killing the Ray actor and shutting down Ray.
+        Shut down the simulation by killing the Ray actors and shutting down Ray.
 
         :return: None
         """
