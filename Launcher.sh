@@ -2,7 +2,7 @@
 
 # spack load pdiplugin-pycall@1.6.0 pdiplugin-mpi@1.6.0;
 
-PDI_PREFIX=${HOME}/opt/pdi
+PDI_PREFIX=${HOME}/opt/pdi_py39
 export PATH=${PDI_PREFIX}/bin:${PATH}
 
 #PARTITION=cpu_short    # Ruche

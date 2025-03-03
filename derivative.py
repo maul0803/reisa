@@ -43,7 +43,7 @@ def iter_func(i: int, current_results):
 
     :param i: The current iteration index.
     :param current_results: List of results from all processes in the iteration.
-    :return: Sum of all process results for the iteration.
+    :return: Average value of the iteration.
     """
     return np.average(current_results[:])
 
