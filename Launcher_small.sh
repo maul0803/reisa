@@ -10,10 +10,11 @@ fi
 PDI_PREFIX=$(grep "pdi_prefix" cluster_config.yml | awk -F': ' '{print $2}' | tr -d ' ')
 PARTITION=$(grep "partition" cluster_config.yml | awk -F': ' '{print $2}' | tr -d ' ')
 CORES_PER_NODE=$(grep "cores_per_node" cluster_config.yml | awk -F': ' '{print $2}' | tr -d ' ')
+NUMBER_OF_CORES_TO_USE_PER_NODE=$(grep "number_of_cores_to_use_per_node" cluster_config.yml | awk -F': ' '{print $2}' | tr -d ' ')
 RAM_RAW=$(grep "ram_per_node" cluster_config.yml | awk -F': ' '{print $2}' | tr -d ' ')
 
 # Validate extracted values
-if [ -z "$PDI_PREFIX" ] || [ -z "$PARTITION" ] || [ -z "$CORES_PER_NODE" ] || [ -z "$RAM_RAW" ]; then
+if [ -z "$PDI_PREFIX" ] || [ -z "$PARTITION" ] || [ -z "$CORES_PER_NODE" ] || [ -z "$NUMBER_OF_CORES_TO_USE_PER_NODE" ] || [ -z "$RAM_RAW" ]; then
   echo "Error: Failed to retrieve values from cluster_config.yml!" >&2
   exit 1
 fi
@@ -88,7 +89,7 @@ LOCAL_SIZE=$((GLOBAL_SIZE / MPI_TASKS))
 # MANAGING FILES
 date=$(date +%Y-%m-%d_%H-%M-%S)
 OUTPUT=outputs/$date\_P$MPI_TASKS\_SN$SIMUNODES\_LS$LOCAL_SIZE\_GS$GLOBAL_SIZE\_I$GENERATION\_AN$WORKER_NODES
-`which python` prescript.py $DATASIZE1 $DATASIZE2 $PARALLELISM1 $PARALLELISM2 $GENERATION $WORKER_NODES $MPI_PER_NODE $CORES_PER_NODE 
+`which python` prescript.py $DATASIZE1 $DATASIZE2 $PARALLELISM1 $PARALLELISM2 $GENERATION $WORKER_NODES $MPI_PER_NODE $NUMBER_OF_CORES_TO_USE_PER_NODE 
 mkdir -p $OUTPUT
 mkdir logs 2>/dev/null
 touch logs/jobs.log
@@ -96,6 +97,6 @@ cp *.yml *.py simulation Script.sh $OUTPUT
 
 # RUNNING
 cd $OUTPUT
-echo -e "Executing sbatch --parsable --nodes=$NNODES --mincpus=${CORES_PER_NODE} --mem-per-cpu=${MEM_PER_CPU}M --partition ${PARTITION} --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CORES_PER_NODE) in $PWD    "
-echo -e "Executing $(sbatch --parsable --nodes=$NNODES --mincpus=${CORES_PER_NODE} --mem-per-cpu=${MEM_PER_CPU}M --partition ${PARTITION} --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $CORES_PER_NODE) in $PWD    " >> $MAIN_DIR/logs/jobs.log
+echo -e "Executing sbatch --parsable --nodes=$NNODES --mincpus=${CORES_PER_NODE} --mem-per-cpu=${MEM_PER_CPU}M --partition ${PARTITION} --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $NUMBER_OF_CORES_TO_USE_PER_NODE) in $PWD    "
+echo -e "Executing $(sbatch --parsable --nodes=$NNODES --mincpus=${CORES_PER_NODE} --mem-per-cpu=${MEM_PER_CPU}M --partition ${PARTITION} --ntasks=$NPROC Script.sh $SIMUNODES $MPI_PER_NODE $NUMBER_OF_CORES_TO_USE_PER_NODE) in $PWD    " >> $MAIN_DIR/logs/jobs.log
 cd $MAIN_DIR

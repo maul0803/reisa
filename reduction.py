@@ -30,6 +30,7 @@ def process_func(rank: int, i: int, queue):
     :param queue: Data queue containing simulation values for the iteration.
     :return: Sum of the queue's data for the current iteration.
     """
+    print("process_func:", type(queue[i]))
     gt = np.array(queue[i])
     return np.sum(gt)
 
